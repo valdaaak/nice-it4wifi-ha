@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+*.bak
+*.bak2
+.DS_Store
+*.zip

@@ -4,7 +4,7 @@ from datetime import timedelta
 
 from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PASSWORD, CONF_PORT, CONF_USERNAME
 
-DOMAIN = "nice_bidiwifi"
+DOMAIN = "nice_it4wifi"
 
 CONFIG_ENTRY_VERSION = 2
 

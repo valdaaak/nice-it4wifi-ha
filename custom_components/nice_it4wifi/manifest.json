@@ -1,14 +1,17 @@
 {
-  "domain": "nice_bidiwifi",
-  "name": "Nice",
-  "codeowners": ["@Jordi-14"],
+  "domain": "nice_it4wifi",
+  "name": "Nice IT4WIFI",
+  "codeowners": [
+    "@Jordi-14",
+    "@valdaaak"
+  ],
   "config_flow": true,
-  "documentation": "https://github.com/Jordi-14/homeassistant_nice",
+  "documentation": "https://github.com/valdaaak/nice-it4wifi-ha",
   "integration_type": "device",
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/Jordi-14/homeassistant_nice/issues",
+  "issue_tracker": "https://github.com/valdaaak/nice-it4wifi-ha/issues",
   "requirements": [],
-  "version": "0.8.0",
+  "version": "0.8.0-it4wifi.1",
   "zeroconf": [
     "_nap._tcp.local.",
     {

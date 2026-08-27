@@ -1,0 +1,94 @@
+# PATCHES — what this fork changes vs upstream v0.8.0
+
+Six fixes on top of [Jordi‑14/homeassistant_nice](https://github.com/Jordi-14/homeassistant_nice)
+`v0.8.0`, so the integration works on a **Nice IT4WIFI** interface (fw 0.4.43,
+`SB575B‑R10.0`) driving a **Nice ROBUS `SG01a`** control unit.
+
+Each fix is one small, isolated change. Nothing else in the upstream code is touched.
+
+---
+
+## NHK error codes (context)
+
+The interface answers commands with `<Error><Code>N</Code></Error>`. Meanings observed
+(and confirmed against the MyNice app's own strings):
+
+| Code | Meaning |
+|---|---|
+| 1 | user not registered / awaiting administrator confirmation (routing signal, **not** a hard error) |
+| 2 | user disabled |
+| 5 | command not allowed (also returned while raw T4 tunnelling is off) |
+| 10 | accessory not yet paired with any user |
+| 12 | user already registered |
+| 14 | frame unroutable (wrong source address) |
+| 15 | accessory not ready (busy) — power‑cycle if stuck |
+
+---
+
+## 1. `transport/lan.py` — TLS for a legacy stack
+
+The IT4WIFI has a **1024‑bit Diffie‑Hellman key** and a TLS stack **without RFC 5746**
+(secure renegotiation). Modern OpenSSL refuses both, so every connection failed with
+`DH_KEY_TOO_SMALL` / `UNSAFE_LEGACY_RENEGOTIATION_DISABLED` before a single byte of NHK.
+
+```python
+context.options |= getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0x4)
+context.set_ciphers("DEFAULT:@SECLEVEL=0")
+```
+
+Result: `TLSv1.2 / DHE-RSA-AES256-SHA256` handshakes succeed.
+
+## 2. `client.py` — code 5 tolerance + raw T4 enable + source address
+
+Two problems on IT4WIFI:
+
+- **Raw T4 tunnelling is off by default and must be enabled per session.** Without it,
+  every DMP register read answers **code 5**. The fix sends `T4_STATUS` (to read the
+  interface's own bus address) and `T4_CONFIG` with `<Status>1</Status>` right after
+  authentication.
+- **The source address in the DMP frame was hardcoded** to `0x50 / 0x91`. The IT4WIFI
+  reports its real address via `T4_STATUS` (`IAddr` / `IEndp`); the source endpoint must
+  be `IEndp | 0x80`. With the wrong endpoint every frame returned **code 14** (unroutable).
+
+The read/status paths also now tolerate **code 5** alongside code 14 as a soft failure.
+
+## 3. `coordinator.py` — code 5 tolerance + keep cached parameters
+
+- Same **code 5** tolerance in the status‑poll fallback.
+- Two return paths handed back a fresh NHK status **without re‑merging the cached extended
+  (BusT4) parameters**, so every time a DMP read hiccuped, all the motor‑parameter
+  entities went `unavailable` for one cycle and flapped. The fix wraps those returns in
+  `_merge_cached_extended_status(...)`.
+
+## 4. `protocol/t4/dmp.py` — parametrise the bus address
+
+`build_dmp_read_frame` / `build_dmp_write_frame` had the source address baked in. They now
+take `iaddr` / `iendp` keyword arguments (defaulting to the old `0x50 / 0x91`) so the
+client can pass the interface‑reported address from fix #2. The frame marker byte is
+computed from them: `marker = iaddr ^ iendp ^ 0x08 ^ sublen ^ daddr ^ dendp`.
+
+## 5. `entity.py` — cloud‑only `KeyError`
+
+`bidi_device_info` built `configuration_url=f"https://{entry.data[CONF_HOST]}"`. In
+**cloud‑only** mode the config entry has no `host` key (only `relay_host`), so this raised
+`KeyError` and Home Assistant refused to add **every** entity. Guarded with
+`entry.data.get(CONF_HOST)`.
+
+## 6. `position.py` — real encoder percentage
+
+The percentage is already the exact encoder ratio (`current / open`). But
+`position_snapshot` fed `resolve_position` an **optimistic 1 %/s animation** that overrode
+it during movement. On a fast gate the display crawled 1 %, 2 %, 3 %… then snapped. The
+fix suppresses the animation when live encoder data is present, so the percentage is the
+measured value at rest and in motion.
+
+---
+
+## Note on calibration
+
+Position calibration is **not needed** on encoder gates and **fails** on a fast gate
+(it tries to physically stop the gate at 20/40/60/80 %, but a gate that crosses its full
+travel in seconds reaches the endpoint before the 0.5 s poll can stop it → *"stopped
+before reaching 20%"*). This fork leaves calibration in place but relies on the encoder
+ratio instead; the calibrate button can stay hidden. See
+[`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the mechanics.
