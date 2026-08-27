@@ -14,6 +14,8 @@ from ...models.administration import (
     NiceInterfaceClock,
     NiceLogEvent,
     NiceLogSnapshot,
+    NiceUser,
+    NiceUserSnapshot,
 )
 from .codec import xml_escape
 
@@ -24,8 +26,14 @@ MAX_GROUP_DEVICES = 32
 MAX_GROUP_RULES = 128
 MAX_PROTOCOL_TEXT_LENGTH = 96
 MAX_INTERFACE_NAME_LENGTH = 64
+MAX_USERNAME_LENGTH = 64
+MAX_USERS = 64
 MAX_ADMINISTRATION_XML_BYTES = 256 * 1024
 _OFFSET_PATTERN = re.compile(r"^[+-](?:0\d|1[0-4]):[0-5]\d$")
+
+# Permissions accepted by USER_EDIT. "delete" removes the pairing; the rest set
+# the account role. The user-facing service restricts writes to a safe subset.
+VALID_USER_PERMISSIONS = ("admin", "user", "disable", "delete")
 
 
 def _parse_xml(xml: str, response_type: str) -> ET.Element:
@@ -110,6 +118,92 @@ def parse_groups_xml(groups_xml: str) -> NiceGroupSnapshot:
             )
         )
     return NiceGroupSnapshot(groups=tuple(groups))
+
+
+def _user_id_from_element(element: ET.Element) -> int | None:
+    raw = element.get("id")
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value >= 0 else None
+
+
+def _user_from_element(element: ET.Element, *, pending: bool) -> NiceUser | None:
+    username = _bounded_text(element.get("username"))
+    if username is None:
+        return None
+    return NiceUser(
+        username=username,
+        user_id=_user_id_from_element(element),
+        permission=None if pending else _bounded_text(element.get("perm")),
+        pending=pending,
+    )
+
+
+def parse_pairings_xml(pairings_xml: str) -> NiceUserSnapshot:
+    """Parse confirmed and pending users from a bounded PAIRINGS response."""
+    root = _parse_xml(pairings_xml, "PAIRINGS")
+    users: list[NiceUser] = []
+    for element in root.findall("./Users/User")[:MAX_USERS]:
+        user = _user_from_element(element, pending=False)
+        if user is not None:
+            users.append(user)
+    for element in root.findall("./PreAss/User"):
+        if len(users) >= MAX_USERS:
+            break
+        user = _user_from_element(element, pending=True)
+        if user is not None:
+            users.append(user)
+    return NiceUserSnapshot(users=tuple(users))
+
+
+def validate_username(username: str) -> str:
+    """Validate a user-provided account name for USER_NEW / USER_EDIT."""
+    normalized = username.strip()
+    if not normalized:
+        raise ValueError("username must not be empty")
+    if len(normalized) > MAX_USERNAME_LENGTH:
+        raise ValueError(
+            f"username must be at most {MAX_USERNAME_LENGTH} characters"
+        )
+    if any(not character.isprintable() for character in normalized):
+        raise ValueError("username must not contain control characters")
+    return normalized
+
+
+def validate_user_permission(permission: str) -> str:
+    """Validate a USER_EDIT permission value."""
+    normalized = permission.strip().lower()
+    if normalized not in VALID_USER_PERMISSIONS:
+        valid = ", ".join(VALID_USER_PERMISSIONS)
+        raise ValueError(f"permission must be one of: {valid}")
+    return normalized
+
+
+def _require_user_id(user_id: int) -> int:
+    if user_id < 0:
+        raise ValueError("user_id must be non-negative")
+    return user_id
+
+
+def build_user_new_body(user_id: int, username: str) -> str:
+    """Build a USER_NEW body that approves one pending user."""
+    return (
+        f'<User id="{_require_user_id(user_id)}" '
+        f'username="{xml_escape(validate_username(username))}"/>\r\n'
+    )
+
+
+def build_user_edit_body(user_id: int, username: str, permission: str) -> str:
+    """Build a USER_EDIT body that changes one user's role or removes it."""
+    return (
+        f'<User id="{_require_user_id(user_id)}" '
+        f'username="{xml_escape(validate_username(username))}" '
+        f'perm="{validate_user_permission(permission)}"/>\r\n'
+    )
 
 
 def build_logs_body(device_id: int, event_count: int = LOG_EVENTS_PER_SCOPE) -> str:

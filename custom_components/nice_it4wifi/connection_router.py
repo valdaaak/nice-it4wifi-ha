@@ -254,6 +254,15 @@ class NiceConnectionRouter:
     def read_groups(self):
         return self._read("read_groups")
 
+    def read_pairings(self):
+        return self._read("read_pairings")
+
+    def approve_user(self, user_id: int, username: str) -> None:
+        self._write("approve_user", user_id, username)
+
+    def edit_user(self, user_id: int, username: str, permission: str) -> None:
+        self._write("edit_user", user_id, username, permission)
+
     def test_connection(self):
         return self._read("test_connection")
 

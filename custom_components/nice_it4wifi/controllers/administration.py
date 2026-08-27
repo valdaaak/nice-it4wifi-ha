@@ -9,7 +9,7 @@ import logging
 import time
 from typing import Any
 
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
 from ..connection import (
     CONNECTION_STATE_AUTH_FAILED,
@@ -27,10 +27,13 @@ from ..models.administration import (
     NiceAdministrationOperation,
     NiceGroupSnapshot,
     NiceLogSnapshot,
+    NiceUserSnapshot,
 )
 from ..protocol.nhk.administration import (
     interface_clock_for,
     validate_interface_name,
+    validate_user_permission,
+    validate_username,
 )
 from .base import OwnerBoundController
 
@@ -39,6 +42,7 @@ _LOGGER = logging.getLogger(__name__)
 ADMINISTRATION_HISTORY_LIMIT = 16
 NAME_VERIFICATION = "info_name_round_trip"
 TIME_VERIFICATION = "info_clock_round_trip"
+USER_VERIFICATION = "pairings_round_trip"
 CLOCK_TOLERANCE_SECONDS = 120
 
 
@@ -49,6 +53,7 @@ class NiceAdministrationController(OwnerBoundController):
         super().__init__(owner)
         self.interface_log_snapshot: NiceLogSnapshot | None = None
         self.access_group_snapshot: NiceGroupSnapshot | None = None
+        self.user_snapshot: NiceUserSnapshot | None = None
         self.administration_history: deque[NiceAdministrationOperation] = deque(
             maxlen=ADMINISTRATION_HISTORY_LIMIT
         )
@@ -209,6 +214,152 @@ class NiceAdministrationController(OwnerBoundController):
             snapshot,
             retrieved_at=datetime.now(UTC),
         )
+        self._notify_entities()
+
+    @property
+    def _authenticated_username(self) -> str | None:
+        """Return the account name Home Assistant authenticates with."""
+        credentials = getattr(self.entry_config, "credentials", None)
+        return getattr(credentials, "username", None)
+
+    def _match_users(self, snapshot: NiceUserSnapshot, username: str) -> list:
+        return [user for user in snapshot.users if user.username == username]
+
+    def _single_user_id(self, snapshot: NiceUserSnapshot, username: str) -> int:
+        matches = self._match_users(snapshot, username)
+        if not matches:
+            raise NiceBidiConnectionError(f"no user named {username!r}")
+        ids = {user.user_id for user in matches if user.user_id is not None}
+        if len(ids) != 1:
+            raise NiceBidiConnectionError(
+                f"cannot resolve a single id for user {username!r}"
+            )
+        return ids.pop()
+
+    async def async_refresh_users(self) -> None:
+        """Retrieve the confirmed and pending user list on demand."""
+        snapshot = await self._async_execute(
+            "refresh_users",
+            self.client.read_pairings,
+            read_only=True,
+        )
+        self.user_snapshot = replace(snapshot, retrieved_at=datetime.now(UTC))
+        self._notify_entities()
+
+    async def async_approve_user(self, username: str) -> None:
+        """Approve one pending user and verify it became confirmed."""
+        target = validate_username(username)
+
+        def approve_and_verify():
+            snapshot = self.client.read_pairings()
+            pending = [
+                user
+                for user in snapshot.users
+                if user.username == target and user.pending
+            ]
+            if not pending:
+                raise NiceBidiConnectionError(
+                    f"no pending user named {target!r} to approve"
+                )
+            if len(pending) > 1:
+                raise NiceBidiConnectionError(
+                    f"multiple pending users named {target!r}; resolve in the app"
+                )
+            user = pending[0]
+            if user.user_id is None:
+                raise NiceBidiConnectionError("pending user is missing an id")
+            self.client.approve_user(user.user_id, user.username)
+            after = self.client.read_pairings()
+            if not any(
+                other.username == target and not other.pending
+                for other in after.users
+            ):
+                raise NiceBidiConnectionError(
+                    "approval was acknowledged but PAIRINGS verification failed"
+                )
+            return after
+
+        snapshot = await self._async_execute(
+            "approve_user",
+            approve_and_verify,
+            read_only=False,
+            verification=USER_VERIFICATION,
+        )
+        self.user_snapshot = replace(snapshot, retrieved_at=datetime.now(UTC))
+        self._notify_entities()
+
+    async def async_set_user_permission(
+        self,
+        username: str,
+        permission: str,
+    ) -> None:
+        """Change a user's role, refusing to lock HA out of its own account."""
+        target = validate_username(username)
+        perm = validate_user_permission(permission)
+        if perm == "delete":
+            raise ServiceValidationError(
+                "use the delete_user service to remove a user"
+            )
+        own = self._authenticated_username
+        if own is not None and target == own and perm != "admin":
+            raise ServiceValidationError(
+                "refusing to lower the permission of the account Home Assistant "
+                "uses; it would lock this integration out of the gate"
+            )
+
+        def edit_and_verify():
+            snapshot = self.client.read_pairings()
+            user_id = self._single_user_id(snapshot, target)
+            self.client.edit_user(user_id, target, perm)
+            after = self.client.read_pairings()
+            if perm in {"admin", "user"} and not any(
+                user.username == target
+                and not user.pending
+                and user.permission == perm
+                for user in after.users
+            ):
+                raise NiceBidiConnectionError(
+                    "permission change was acknowledged but verification failed"
+                )
+            return after
+
+        snapshot = await self._async_execute(
+            "set_user_permission",
+            edit_and_verify,
+            read_only=False,
+            verification=USER_VERIFICATION,
+        )
+        self.user_snapshot = replace(snapshot, retrieved_at=datetime.now(UTC))
+        self._notify_entities()
+
+    async def async_delete_user(self, username: str) -> None:
+        """Remove one user, refusing to delete HA's own account."""
+        target = validate_username(username)
+        own = self._authenticated_username
+        if own is not None and target == own:
+            raise ServiceValidationError(
+                "refusing to delete the account Home Assistant uses; it would "
+                "lock this integration out of the gate"
+            )
+
+        def delete_and_verify():
+            snapshot = self.client.read_pairings()
+            user_id = self._single_user_id(snapshot, target)
+            self.client.edit_user(user_id, target, "delete")
+            after = self.client.read_pairings()
+            if any(user.username == target for user in after.users):
+                raise NiceBidiConnectionError(
+                    "delete was acknowledged but the user is still present"
+                )
+            return after
+
+        snapshot = await self._async_execute(
+            "delete_user",
+            delete_and_verify,
+            read_only=False,
+            verification=USER_VERIFICATION,
+        )
+        self.user_snapshot = replace(snapshot, retrieved_at=datetime.now(UTC))
         self._notify_entities()
 
     async def async_update_interface_name(self, name: str) -> None:

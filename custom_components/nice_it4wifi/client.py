@@ -23,6 +23,7 @@ from .models.administration import (
     NiceGroupSnapshot,
     NiceInterfaceClock,
     NiceLogSnapshot,
+    NiceUserSnapshot,
 )
 from .models.device import (
     NiceDeviceInfo as NiceBidiDeviceInfo,
@@ -58,8 +59,11 @@ from .protocol.nhk.administration import (
     build_reboot_body,
     build_update_clock_body,
     build_update_name_body,
+    build_user_edit_body,
+    build_user_new_body,
     parse_groups_xml,
     parse_logs_xml,
+    parse_pairings_xml,
     validate_interface_name,
 )
 from .protocol.nhk.status import parse_nhk_status_frames as _parse_nhk_status_frames
@@ -288,6 +292,24 @@ class NiceBidiClient:
     def read_groups(self) -> NiceGroupSnapshot:
         """Read a bounded, redacted summary of local access groups."""
         return self._run_with_reconnect(self._read_groups_locked)
+
+    def read_pairings(self) -> NiceUserSnapshot:
+        """Read confirmed and pending users paired to the interface."""
+        return self._run_with_reconnect(self._read_pairings_locked)
+
+    def approve_user(self, user_id: int, username: str) -> None:
+        """Approve one pending user (USER_NEW)."""
+        body = build_user_new_body(user_id, username)
+        self._run_command_once(
+            lambda: self._user_command_locked("USER_NEW", body)
+        )
+
+    def edit_user(self, user_id: int, username: str, permission: str) -> None:
+        """Change a user's role or remove it (USER_EDIT)."""
+        body = build_user_edit_body(user_id, username, permission)
+        self._run_command_once(
+            lambda: self._user_command_locked("USER_EDIT", body)
+        )
 
     def update_interface_name(self, name: str) -> None:
         """Update the shared Wi-Fi interface name once."""
@@ -786,6 +808,17 @@ class NiceBidiClient:
         if "<Error>" in _printable(response):
             raise NiceBidiConnectionError(_response_error_summary(response))
         return parse_groups_xml(_xml_payload(response))
+
+    def _read_pairings_locked(self) -> NiceUserSnapshot:
+        response = self._signed_exchange_locked("PAIRINGS")
+        if "<Error>" in _printable(response):
+            raise NiceBidiConnectionError(_response_error_summary(response))
+        return parse_pairings_xml(_xml_payload(response))
+
+    def _user_command_locked(self, request_type: str, body: str) -> None:
+        response = self._signed_exchange_locked(request_type, body)
+        if "<Error>" in _printable(response):
+            raise NiceBidiConnectionError(_response_error_summary(response))
 
     def _t4_request_locked(
         self,

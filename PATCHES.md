@@ -84,6 +84,25 @@ measured value at rest and in motion.
 
 ---
 
+## 7. `services.py` — user management (fork addition)
+
+Beyond the six compatibility fixes, this fork adds a small service layer over the
+NHK `PAIRINGS` / `USER_NEW` / `USER_EDIT` commands (the upstream integration has no
+service layer at all). Four Home Assistant services — `list_users` (response data),
+`approve_user`, `set_user_permission`, `delete_user` — let an administrator approve
+a newly paired phone and manage roles from Home Assistant instead of the MyNice app.
+
+The services refuse to delete or downgrade the account Home Assistant authenticates
+with, preventing self-lockout, and verify each mutation with a `PAIRINGS` round-trip.
+Reusing the existing signed-exchange, reconnect-wrapper, and snapshot machinery, the
+change is additive: new `read_pairings` / `approve_user` / `edit_user` on the client
+and router, `parse_pairings_xml` / `build_user_*_body` in `protocol/nhk/administration.py`,
+`NiceUser` / `NiceUserSnapshot` models, user methods on the administration controller,
+and `services.py` + `services.yaml`. Account names are exposed only through the
+on-demand `list_users` response — never persisted entity state or diagnostics.
+
+---
+
 ## Note on calibration
 
 Position calibration is **not needed** on encoder gates and **fails** on a fast gate

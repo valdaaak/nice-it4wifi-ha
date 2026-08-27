@@ -30,6 +30,27 @@ Verified on **IT4WIFI interface fw 0.4.43** (`SB575B‑R10.0`) + **Nice ROBUS `S
   temperature, last stop reason
 - **Local** connection (TLS on port 443); optional cloud relay fallback
 
+## User management
+
+Approve and manage the phones/fobs paired to the gate straight from Home
+Assistant — no MyNice app or scripts. The integration adds four services
+(Developer Tools → Actions, or from scripts/automations):
+
+- `nice_it4wifi.list_users` — return the paired users, including any **pending**
+  pairing requests waiting for approval (response data).
+- `nice_it4wifi.approve_user` — approve a pending user by `username`.
+- `nice_it4wifi.set_user_permission` — set a user's role: `admin`, `user`, or
+  `disable`.
+- `nice_it4wifi.delete_user` — remove a user's pairing.
+
+When a new phone pairs from the MyNice / MyNice Pro app it shows up as *pending*;
+call `list_users` to see it, then `approve_user`. The account Home Assistant
+itself authenticates with is protected — the services refuse to delete it or
+lower its permission, so the integration can't be locked out of the gate.
+
+Account names are identifying data, so they are returned only in the on-demand
+`list_users` response — never stored in entity state, attributes, or diagnostics.
+
 ## Known limitations
 
 - **Position calibration is not needed and is disabled by design.** The percentage is the

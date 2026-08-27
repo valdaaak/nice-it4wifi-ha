@@ -224,5 +224,63 @@
         "cloud_only": "Fully cloud"
       }
     }
+  },
+  "services": {
+    "list_users": {
+      "name": "List users",
+      "description": "Return the users paired to the gate, including any pending pairing requests awaiting approval.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Gate",
+          "description": "Which gate to query. Optional when only one Nice IT4WIFI gate is configured."
+        }
+      }
+    },
+    "approve_user": {
+      "name": "Approve user",
+      "description": "Approve a pending user so their phone or fob can control the gate.",
+      "fields": {
+        "username": {
+          "name": "Username",
+          "description": "Name of the pending user to approve, as shown by List users."
+        },
+        "config_entry_id": {
+          "name": "Gate",
+          "description": "Which gate to act on. Optional when only one gate is configured."
+        }
+      }
+    },
+    "set_user_permission": {
+      "name": "Set user permission",
+      "description": "Change a user's role. Admins can manage other users; disable revokes access without removing the pairing.",
+      "fields": {
+        "username": {
+          "name": "Username",
+          "description": "The user whose permission should change."
+        },
+        "permission": {
+          "name": "Permission",
+          "description": "New role: admin, user, or disable."
+        },
+        "config_entry_id": {
+          "name": "Gate",
+          "description": "Which gate to act on. Optional when only one gate is configured."
+        }
+      }
+    },
+    "delete_user": {
+      "name": "Delete user",
+      "description": "Remove a user's pairing from the gate.",
+      "fields": {
+        "username": {
+          "name": "Username",
+          "description": "The user to remove."
+        },
+        "config_entry_id": {
+          "name": "Gate",
+          "description": "Which gate to act on. Optional when only one gate is configured."
+        }
+      }
+    }
   }
 }

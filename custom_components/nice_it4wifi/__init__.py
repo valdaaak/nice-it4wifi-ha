@@ -21,6 +21,7 @@ from .const import (
 from .models.config import ConnectionMode
 from .models.discovery import normalize_device_id
 from .runtime import NiceRuntimeData, get_coordinator
+from .services import async_setup_services, async_unload_services
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -124,6 +125,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         config=coordinator.entry_config,
     )
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    async_setup_services(hass)
     return True
 
 
@@ -136,4 +138,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = get_coordinator(entry)
     await coordinator.async_shutdown()
     entry.runtime_data = None
+    async_unload_services(hass)
     return unload_ok

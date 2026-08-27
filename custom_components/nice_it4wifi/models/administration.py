@@ -78,6 +78,49 @@ class NiceGroupSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class NiceUser:
+    """One user account paired to the interface.
+
+    Unlike the redacted group summaries, user management inherently needs the
+    account name to be actionable, so this fork exposes it — but only through
+    on-demand service responses, never persisted entity state or diagnostics.
+    """
+
+    username: str
+    user_id: int | None = None
+    permission: str | None = None
+    pending: bool = False
+
+    def as_dict(self) -> dict[str, str | int | bool]:
+        """Serialize the fields needed to identify and manage a user."""
+        values: dict[str, str | int | bool | None] = {
+            "user_id": self.user_id,
+            "username": self.username,
+            "permission": self.permission,
+            "pending": self.pending,
+        }
+        return {key: value for key, value in values.items() if value is not None}
+
+
+@dataclass(frozen=True, slots=True)
+class NiceUserSnapshot:
+    """A bounded view of confirmed and pending interface users."""
+
+    users: tuple[NiceUser, ...]
+    retrieved_at: datetime | None = None
+
+    @property
+    def count(self) -> int:
+        """Return the number of retained users."""
+        return len(self.users)
+
+    @property
+    def pending_count(self) -> int:
+        """Return the number of users awaiting administrator approval."""
+        return sum(1 for user in self.users if user.pending)
+
+
+@dataclass(frozen=True, slots=True)
 class NiceInterfaceClock:
     """NHK interface clock fields."""
 
