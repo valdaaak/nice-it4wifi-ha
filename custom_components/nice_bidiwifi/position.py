@@ -233,9 +233,19 @@ class NiceBidiPositionController(OwnerBoundController["NiceBidiDataUpdateCoordin
     @property
     def position_snapshot(self) -> NicePosition | None:
         """Return the normalized position with provenance and confidence."""
+        simulated = self._current_simulated_position()
+        # Encoder gates (IT4WIFI/ROBUS) report an exact live ratio every poll,
+        # so the optimistic 1%/s fallback animation must not overwrite it during
+        # movement - inak percenta na rychlej brane lezu 1,2,3% a potom skocia.
+        if (
+            simulated is not None
+            and self.data is not None
+            and self._has_encoder_calibration_data(self.data)
+        ):
+            simulated = None
         return resolve_position(
             self.data,
-            simulated=self._current_simulated_position(),
+            simulated=simulated,
             last_known=self._last_known_position,
         )
 

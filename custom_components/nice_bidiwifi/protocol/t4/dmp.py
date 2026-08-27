@@ -63,6 +63,9 @@ def build_dmp_read_frame(
     group: int,
     parameter: int,
     index: int | None = None,
+    *,
+    iaddr: int = 0x50,
+    iendp: int = 0x91,
 ) -> bytes:
     """Build a DMP register read frame."""
     args = [group, parameter, 0x99, 0x00]
@@ -71,12 +74,12 @@ def build_dmp_read_frame(
     else:
         args.extend([0x01, index])
     sublen = len(args) + 1
-    marker = 0xC9 ^ sublen ^ daddr ^ dendpoint
+    marker = iaddr ^ iendp ^ 0x08 ^ sublen ^ daddr ^ dendpoint
     body = [
         daddr,
         dendpoint,
-        0x50,
-        0x91,
+        iaddr,
+        iendp,
         0x08,
         sublen,
         marker,
@@ -93,6 +96,9 @@ def build_dmp_write_frame(
     group: int,
     parameter: int,
     value: bytes,
+    *,
+    iaddr: int = 0x50,
+    iendp: int = 0x91,
 ) -> bytes:
     """Build a DMP register write frame."""
     if not value:
@@ -101,12 +107,12 @@ def build_dmp_write_frame(
         raise ValueError("value must fit in a DMP byte-length payload")
     args = [group, parameter, 0xA9, 0x00, len(value), *value]
     sublen = len(args) + 1
-    marker = 0xC9 ^ sublen ^ daddr ^ dendpoint
+    marker = iaddr ^ iendp ^ 0x08 ^ sublen ^ daddr ^ dendpoint
     body = [
         daddr,
         dendpoint,
-        0x50,
-        0x91,
+        iaddr,
+        iendp,
         0x08,
         sublen,
         marker,

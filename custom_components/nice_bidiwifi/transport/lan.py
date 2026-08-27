@@ -34,6 +34,9 @@ def make_local_tls_context() -> ssl.SSLContext:
     context.verify_mode = ssl.CERT_NONE
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.maximum_version = ssl.TLSVersion.TLSv1_2
+    # IT4WIFI (interface fw 0.4.43): legacy TLS stack, no RFC 5746, 1024-bit DH key.
+    context.options |= getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0x4)
+    context.set_ciphers("DEFAULT:@SECLEVEL=0")
     return context
 
 

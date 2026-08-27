@@ -165,6 +165,9 @@ class NiceBidiClient:
         self._event_callbacks: list[RawEventCallback] = []
         self._event_failure_callbacks: list[ReaderFailureCallback] = []
         self._session_id = 0
+        self._t4_iaddr = 0x50
+        self._t4_iendp = 0x91
+        self._t4_raw_ready = False
         self._session_key: bytes | None = None
         self._sequence = 1
         self._lock = threading.RLock()
@@ -344,7 +347,7 @@ class NiceBidiClient:
         try:
             return self.read_status()
         except NiceBidiConnectionError as err:
-            if nice_bidi_error_code(err) != "14":
+            if nice_bidi_error_code(err) not in {"5", "14"}:
                 raise
             info = self.read_info()
             if device_info_supports_nhk_status(info, self.device_id):
@@ -463,6 +466,43 @@ class NiceBidiClient:
             "Nice %s NHK authentication succeeded with session id %s",
             self._route_name,
             self._session_id,
+        )
+        self._enable_t4_raw_locked()
+
+    def _enable_t4_raw_locked(self) -> None:
+        """Read the interface bus address and turn on raw T4 tunnelling.
+
+        The IT4WIFI reports its own bus address (IAddr) and endpoint (IEndp) and
+        keeps raw T4 messaging disabled until asked, per session. Without this
+        the DMP register reads answer Code 5 (not allowed) or Code 14
+        (unroutable), which is why every parameter entity stayed unavailable.
+        """
+        self._t4_raw_ready = False
+        try:
+            text = _printable(self._signed_exchange_locked("T4_STATUS"))
+            iaddr = re.search(r"<IAddr>([0-9A-Fa-f]+)</IAddr>", text)
+            iendp = re.search(r"<IEndp>([0-9A-Fa-f]+)</IEndp>", text)
+            status = re.search(r"<Status>(\d+)</Status>", text)
+            if iaddr and iendp:
+                self._t4_iaddr = int(iaddr.group(1), 16)
+                self._t4_iendp = int(iendp.group(1), 16) | 0x80
+            if status is None or status.group(1) != "1":
+                self._signed_exchange_locked(
+                    "T4_CONFIG",
+                    '<Interface id="1">\r\n<Status>1</Status>\r\n'
+                    "<Logs>0</Logs>\r\n<Events>1</Events>\r\n</Interface>\r\n",
+                )
+                text = _printable(self._signed_exchange_locked("T4_STATUS"))
+                status = re.search(r"<Status>(\d+)</Status>", text)
+            self._t4_raw_ready = bool(status and status.group(1) == "1")
+        except Exception as err:  # noqa: BLE001 - degrade to high level actions
+            _LOGGER.debug("Nice T4 raw enable failed: %s", err)
+            return
+        _LOGGER.debug(
+            "Nice T4 raw messaging ready=%s iaddr=%02X iendp=%02X",
+            self._t4_raw_ready,
+            self._t4_iaddr,
+            self._t4_iendp,
         )
 
     def _ensure_connected_locked(self) -> None:
@@ -640,6 +680,8 @@ class NiceBidiClient:
                 group,
                 parameter,
                 value,
+                iaddr=self._t4_iaddr,
+                iendp=self._t4_iendp,
             ),
             *CONTROLLER_TARGET.as_tuple(),
             self.t4_timeout_ms,
@@ -659,7 +701,14 @@ class NiceBidiClient:
     ) -> None:
         response, plains = self._t4_request_locked(
             "DMP",
-            build_dmp_read_frame(daddr, dendpoint, group, parameter),
+            build_dmp_read_frame(
+                daddr,
+                dendpoint,
+                group,
+                parameter,
+                iaddr=self._t4_iaddr,
+                iendp=self._t4_iendp,
+            ),
             daddr,
             dendpoint,
             self.t4_timeout_ms,

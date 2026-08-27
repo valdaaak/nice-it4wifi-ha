@@ -281,13 +281,14 @@ class NiceBidiDataUpdateCoordinator(
         if self._use_nhk_status:
             if self.device_info is None:
                 self._store_device_info(self.client.read_info())
-            return self.client.read_nhk_status()
+            # podrz posledne znama parametre namiesto zosednutia entit
+            return self._merge_cached_extended_status(self.client.read_nhk_status())
 
         try:
             include_extended = self._should_read_extended_status()
             status = self.client.read_status(include_extended=include_extended)
         except NiceBidiConnectionError as err:
-            if nice_bidi_error_code(err) != "14":
+            if nice_bidi_error_code(err) not in {"5", "14"}:
                 raise
             try:
                 if self.device_info is None:
@@ -301,7 +302,8 @@ class NiceBidiDataUpdateCoordinator(
                     "Nice DMP status polling is not supported by this device; "
                     "using NHK DoorStatus polling"
                 )
-                return status
+                # to iste aj tu - jedno zlyhane DMP citanie nesmie vymazat parametre
+                return self._merge_cached_extended_status(status)
             if not self._supports_high_level_actions():
                 raise
             self.status_polling_supported = False
