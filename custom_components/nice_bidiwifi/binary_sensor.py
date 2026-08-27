@@ -1,0 +1,303 @@
+"""Binary sensor platform for Nice."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+
+from homeassistant.components.binary_sensor import (
+    DOMAIN as BINARY_SENSOR_DOMAIN,
+    BinarySensorDeviceClass,
+    BinarySensorEntity,
+    BinarySensorEntityDescription,
+)
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
+from .client import (
+    STATE_CLOSED,
+    STATE_CLOSING,
+    STATE_OPEN,
+    STATE_OPENING,
+    STATE_PARTIALLY_OPEN,
+    STATE_STOPPED,
+    NiceBidiStatus,
+)
+from .coordinator import NiceBidiDataUpdateCoordinator
+from .entities.factory import (
+    NiceCapabilityKey,
+    NiceEntityDescriptionMixin,
+    build_described_entities,
+)
+from .entity import NiceCoordinatorEntity
+from .runtime import get_coordinator
+
+
+@dataclass(frozen=True, kw_only=True)
+class NiceBidiBinarySensorEntityDescription(
+    NiceEntityDescriptionMixin,
+    BinarySensorEntityDescription,
+):
+    """Description for a Nice binary sensor."""
+
+    value_fn: Callable[[NiceBidiStatus], bool | None] | None = None
+    coordinator_value_fn: (
+        Callable[[NiceBidiDataUpdateCoordinator], bool | None] | None
+    ) = None
+    required_capability: NiceCapabilityKey = NiceCapabilityKey.STATUS
+
+
+def _gate_open(status: NiceBidiStatus) -> bool | None:
+    """Return the same read-only open state as the gate switch."""
+    if status.state == STATE_CLOSED:
+        return False
+    if status.state in {
+        STATE_OPEN,
+        STATE_OPENING,
+        STATE_CLOSING,
+        STATE_STOPPED,
+        STATE_PARTIALLY_OPEN,
+    }:
+        return True
+    return None
+
+
+BINARY_SENSORS: tuple[NiceBidiBinarySensorEntityDescription, ...] = (
+    NiceBidiBinarySensorEntityDescription(
+        key="gate_open",
+        name="Gate open",
+        device_class=BinarySensorDeviceClass.OPENING,
+        value_fn=_gate_open,
+    ),
+    NiceBidiBinarySensorEntityDescription(
+        key="limit_closed",
+        name="Closed limit switch",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        entity_registry_visible_default=False,
+        value_fn=lambda status: status.limit_closed,
+    ),
+    NiceBidiBinarySensorEntityDescription(
+        key="limit_open",
+        name="Open limit switch",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        entity_registry_visible_default=False,
+        value_fn=lambda status: status.limit_open,
+    ),
+    NiceBidiBinarySensorEntityDescription(
+        key="photocell",
+        name="Photocell",
+        device_class=BinarySensorDeviceClass.SAFETY,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        entity_registry_visible_default=False,
+        value_fn=lambda status: status.photocell,
+    ),
+    NiceBidiBinarySensorEntityDescription(
+        key="obstacle",
+        name="Obstacle detected",
+        device_class=BinarySensorDeviceClass.SAFETY,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_visible_default=False,
+        value_fn=lambda status: status.obstacle,
+    ),
+    NiceBidiBinarySensorEntityDescription(
+        key="input_1",
+        name="Input 1 enabled",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        entity_registry_visible_default=False,
+        value_fn=lambda status: status.input_1,
+    ),
+    NiceBidiBinarySensorEntityDescription(
+        key="input_2",
+        name="Input 2 enabled",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        entity_registry_visible_default=False,
+        value_fn=lambda status: status.input_2,
+    ),
+    NiceBidiBinarySensorEntityDescription(
+        key="input_3",
+        name="Input 3 enabled",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        entity_registry_visible_default=False,
+        value_fn=lambda status: status.input_3,
+    ),
+    NiceBidiBinarySensorEntityDescription(
+        key="input_4",
+        name="Input 4 enabled",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        entity_registry_visible_default=False,
+        value_fn=lambda status: status.input_4,
+    ),
+    NiceBidiBinarySensorEntityDescription(
+        key="auto_close",
+        name="Auto close",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_visible_default=False,
+        value_fn=lambda status: status.auto_close,
+    ),
+    NiceBidiBinarySensorEntityDescription(
+        key="photo_close",
+        name="Photo close",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_visible_default=False,
+        value_fn=lambda status: status.photo_close,
+    ),
+    NiceBidiBinarySensorEntityDescription(
+        key="always_close",
+        name="Always close",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_visible_default=False,
+        value_fn=lambda status: status.always_close,
+    ),
+    NiceBidiBinarySensorEntityDescription(
+        key="standby",
+        name="Standby",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_visible_default=False,
+        value_fn=lambda status: status.standby,
+    ),
+    NiceBidiBinarySensorEntityDescription(
+        key="pre_flash",
+        name="Pre-flash",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_visible_default=False,
+        value_fn=lambda status: status.pre_flash,
+    ),
+    NiceBidiBinarySensorEntityDescription(
+        key="key_lock",
+        name="Key lock",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_visible_default=False,
+        value_fn=lambda status: status.key_lock,
+    ),
+    NiceBidiBinarySensorEntityDescription(
+        key="oxi_detected",
+        name="OXI receiver detected",
+        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_visible_default=False,
+        value_fn=lambda status: status.oxi_detected,
+    ),
+)
+
+
+def _event_supported(
+    coordinator: NiceBidiDataUpdateCoordinator,
+) -> bool | None:
+    capabilities = coordinator.capabilities
+    return capabilities.local_events if capabilities is not None else None
+
+
+def _maintenance_due(status: NiceBidiStatus) -> bool | None:
+    if status.maintenance_count is None or status.maintenance_threshold is None:
+        return None
+    if status.maintenance_threshold <= 0:
+        return False
+    return status.maintenance_count >= status.maintenance_threshold
+
+
+def _bluebus_fault(
+    coordinator: NiceBidiDataUpdateCoordinator,
+) -> bool | None:
+    value = coordinator.bluebus_error_status
+    if value is None:
+        return None
+    return value.strip().casefold() not in {
+        "0",
+        "00",
+        "false",
+        "none",
+        "no_error",
+        "ok",
+    }
+
+
+EVENT_BINARY_SENSORS: tuple[NiceBidiBinarySensorEntityDescription, ...] = (
+    NiceBidiBinarySensorEntityDescription(
+        key="maintenance_due",
+        name="Maintenance due",
+        protected=False,
+        supported_fn=_event_supported,
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_visible_default=False,
+        value_fn=_maintenance_due,
+    ),
+    NiceBidiBinarySensorEntityDescription(
+        key="bluebus_fault",
+        name="BlueBUS fault",
+        protected=False,
+        supported_fn=_event_supported,
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        entity_registry_visible_default=False,
+        coordinator_value_fn=_bluebus_fault,
+    ),
+)
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up binary sensors from a config entry."""
+    coordinator = get_coordinator(entry)
+    async_add_entities(
+        build_described_entities(
+            coordinator,
+            entry,
+            (*BINARY_SENSORS, *EVENT_BINARY_SENSORS),
+            NiceBidiBinarySensor,
+        )
+    )
+
+
+class NiceBidiBinarySensor(NiceCoordinatorEntity, BinarySensorEntity):
+    """Nice BusT4 binary diagnostic sensor."""
+
+    _attr_has_entity_name = True
+
+    entity_description: NiceBidiBinarySensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: NiceBidiDataUpdateCoordinator,
+        entry: ConfigEntry,
+        description: NiceBidiBinarySensorEntityDescription,
+    ) -> None:
+        """Initialize the binary sensor."""
+        super().__init__(
+            coordinator,
+            entry,
+            platform_domain=BINARY_SENSOR_DOMAIN,
+            unique_id_suffix=description.key,
+            name=description.name,
+            suggested_id_suffix=description.name,
+            description=description,
+        )
+        self.entity_description = description
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return the binary value."""
+        if self.entity_description.coordinator_value_fn is not None:
+            return self.entity_description.coordinator_value_fn(self.coordinator)
+        status = self.coordinator.data
+        if status is None or self.entity_description.value_fn is None:
+            return None
+        return self.entity_description.value_fn(status)
+
+    @property
+    def available(self) -> bool:
+        """Return true if a value is known."""
+        return self.coordinator.last_update_success and self.is_on is not None
