@@ -57,7 +57,9 @@ List the radio transmitters (remotes) stored in the gate's radio receiver —
 handy when the MyNice app's receiver management no longer works for an IT4WIFI.
 
 - `nice_it4wifi.list_transmitters` — returns each stored transmitter with its
-  serial, type (`mono`/`bidi`) and the programmed buttons (response data).
+  serial, type (`mono`/`bidi`) and, for every programmed button, the gate command
+  it triggers (e.g. `Step by step`, `Partial opening 1`, `Open`, `Close`) —
+  response data.
 
 It reads the OXI/OXIBD code memory over BusT4 (DMP group `0x0A`, param `0x25`),
 recycling the NHK session to get past the interface's per-session raw-read cap,

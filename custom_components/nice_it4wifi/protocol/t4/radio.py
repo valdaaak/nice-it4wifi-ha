@@ -31,6 +31,33 @@ RADIO_READ_RECYCLE = 4
 REMOTE_TYPE_MONO = 0
 REMOTE_TYPE_BIDI = 1
 
+# Mode-2 button function code -> gate command name. The code is the index into
+# the app's own function picker for a control-unit receiver (not the DEP bus
+# byte, which uses a different numbering). Labels from the MyNice Pro resources.
+RADIO_COMMAND_NAMES = {
+    0: "None",
+    1: "Step by step",
+    2: "Partial opening 1",
+    3: "Open",
+    4: "Close",
+    5: "Stop",
+    6: "Condominium step by step",
+    7: "Step by step high priority",
+    8: "Partial opening 2",
+    9: "Partial opening 3",
+    10: "Open and block",
+    11: "Close and block",
+    12: "Block automation",
+    13: "Release automation",
+    14: "Courtesy light timer",
+    15: "Courtesy light on/off",
+}
+
+
+def radio_command_name(code: int) -> str:
+    """Return the human-readable name of a Mode-2 button function code."""
+    return RADIO_COMMAND_NAMES.get(code, f"command {code}")
+
 
 def build_radio_read_frame(
     position: int,
@@ -69,6 +96,7 @@ class RadioRecord:
     position: int
     serial: int
     button: int
+    command: int
     round: int
     remote_type: int
     empty: bool
@@ -97,6 +125,7 @@ def decode_radio_record(plain: bytes) -> RadioRecord | None:
             position=position,
             serial=0,
             button=0,
+            command=0,
             round=0,
             remote_type=REMOTE_TYPE_MONO,
             empty=False,
@@ -109,6 +138,7 @@ def decode_radio_record(plain: bytes) -> RadioRecord | None:
         | ((record[5] & 0x0F) << 24)
     )
     button = record[5] >> 4
+    command = record[8] >> 4
     round_ = record[6] | (record[7] << 8)
     remote_type = (record[9] >> 4) & 0x03
     empty = serial == 0 and button == 0 and round_ == 0
@@ -116,6 +146,7 @@ def decode_radio_record(plain: bytes) -> RadioRecord | None:
         position=position,
         serial=serial,
         button=button,
+        command=command,
         round=round_,
         remote_type=remote_type,
         empty=empty,

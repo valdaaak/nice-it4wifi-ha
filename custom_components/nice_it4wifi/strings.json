@@ -284,7 +284,7 @@
     },
     "list_transmitters": {
       "name": "List transmitters",
-      "description": "Return the radio transmitters (remotes) stored in the gate's radio receiver, with their serial, type (mono/bidi) and programmed buttons.",
+      "description": "Return the radio transmitters (remotes) stored in the gate's radio receiver, with their serial, type (mono/bidi), and for each programmed button the gate command it triggers.",
       "fields": {
         "config_entry_id": {
           "name": "Gate",
