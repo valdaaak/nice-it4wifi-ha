@@ -103,6 +103,26 @@ on-demand `list_users` response — never persisted entity state or diagnostics.
 
 ---
 
+## 8. `protocol/t4/radio.py` + `list_transmitters` service (fork addition)
+
+Lists the transmitters stored in the OXI/OXIBD radio receiver over BusT4 — the
+receiver-management the MyNice app drops for IT4WIFI. A radio-code read is a DMP
+GET to the receiver (daddr `0x00` / dendp `0x0A`, group `0x0A`, param `0x25`) but,
+unlike a control-unit register read, its message body carries a 2-byte position
+payload (`op, 0x00 seq, 0x02 datalen, posHi, posLo`) and the receiver answers
+with `op=0x01` (not the `0x19` GET reply) — so it gets its own frame builder and
+decoder (`build_radio_read_frame` / `decode_radio_record`). The record layout
+(serial 28-bit, button in the serial's top nibble, round, mono/bidi type) was
+recovered by disassembling the app's native `libnative-lib.so` and cross-checked
+against the pruwait/makstech BusT4 projects.
+
+The client enumerates positions 0…N, **recycling the NHK session every few reads**
+because the interface rejects further raw reads after a handful on one session;
+it stops at the first virgin slot. Exposed read-only as
+`nice_it4wifi.list_transmitters` (response data); no add/delete.
+
+---
+
 ## Note on calibration
 
 Position calibration is **not needed** on encoder gates and **fails** on a fast gate

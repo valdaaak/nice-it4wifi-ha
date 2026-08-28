@@ -51,6 +51,20 @@ lower its permission, so the integration can't be locked out of the gate.
 Account names are identifying data, so they are returned only in the on-demand
 `list_users` response — never stored in entity state, attributes, or diagnostics.
 
+## Radio transmitters (read)
+
+List the radio transmitters (remotes) stored in the gate's radio receiver —
+handy when the MyNice app's receiver management no longer works for an IT4WIFI.
+
+- `nice_it4wifi.list_transmitters` — returns each stored transmitter with its
+  serial, type (`mono`/`bidi`) and the programmed buttons (response data).
+
+It reads the OXI/OXIBD code memory over BusT4 (DMP group `0x0A`, param `0x25`),
+recycling the NHK session to get past the interface's per-session raw-read cap,
+and stops at the end of the used memory. This is **read-only**; adding and
+deleting transmitters are not exposed (writes to the receiver memory are out of
+scope here). See [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the frame details.
+
 ## Known limitations
 
 - **Position calibration is not needed and is disabled by design.** The percentage is the

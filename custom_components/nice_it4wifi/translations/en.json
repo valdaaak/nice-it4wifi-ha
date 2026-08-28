@@ -281,6 +281,16 @@
           "description": "Which gate to act on. Optional when only one gate is configured."
         }
       }
+    },
+    "list_transmitters": {
+      "name": "List transmitters",
+      "description": "Return the radio transmitters (remotes) stored in the gate's radio receiver, with their serial, type (mono/bidi) and programmed buttons.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Gate",
+          "description": "Which gate to query. Optional when only one Nice IT4WIFI gate is configured."
+        }
+      }
     }
   }
 }

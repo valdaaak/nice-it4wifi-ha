@@ -25,6 +25,7 @@ from .models.administration import (
     NiceLogSnapshot,
     NiceUserSnapshot,
 )
+from .models.radio import NiceTransmitterSnapshot
 from .models.device import (
     NiceDeviceInfo as NiceBidiDeviceInfo,
     NiceServiceCapability as NiceBidiServiceCapability,
@@ -91,6 +92,14 @@ from .protocol.t4.dmp import (
     decode_dmp_response,
     DmpResponse,
     parse_dmp_response,
+)
+from .protocol.t4.radio import (
+    RADIO_MAX_POSITIONS,
+    RADIO_READ_RECYCLE,
+    RADIO_TARGET_ADDR,
+    RADIO_TARGET_ENDPOINT,
+    build_radio_read_frame,
+    decode_radio_record,
 )
 from .protocol.t4.registers import (
     CONTROLLER_TARGET,
@@ -296,6 +305,11 @@ class NiceBidiClient:
     def read_pairings(self) -> NiceUserSnapshot:
         """Read confirmed and pending users paired to the interface."""
         return self._run_with_reconnect(self._read_pairings_locked)
+
+    def read_transmitters(self) -> NiceTransmitterSnapshot:
+        """Read the transmitters stored in the OXI radio receiver."""
+        with self._lock:
+            return self._read_transmitters_locked()
 
     def approve_user(self, user_id: int, username: str) -> None:
         """Approve one pending user (USER_NEW)."""
@@ -819,6 +833,73 @@ class NiceBidiClient:
         response = self._signed_exchange_locked(request_type, body)
         if "<Error>" in _printable(response):
             raise NiceBidiConnectionError(_response_error_summary(response))
+
+    def _radio_read_once_locked(self, position: int):
+        frame = build_radio_read_frame(position, self._t4_iaddr, self._t4_iendp)
+        return self._t4_request_locked(
+            "DMP",
+            frame,
+            RADIO_TARGET_ADDR,
+            RADIO_TARGET_ENDPOINT,
+            self.t4_timeout_ms,
+        )
+
+    def _read_transmitters_locked(self) -> NiceTransmitterSnapshot:
+        """Enumerate radio-code slots, recycling the session past its read cap.
+
+        The interface rejects further raw reads after a handful on one session,
+        so every few positions the NHK session is torn down and re-established
+        (which re-enables raw T4). A fresh session that still errors on its first
+        read means the used memory has ended.
+        """
+        records = []
+        self._ensure_connected_locked()
+        in_batch = 0
+        consecutive_empty = 0
+        position = 0
+        while position < RADIO_MAX_POSITIONS:
+            if in_batch >= RADIO_READ_RECYCLE:
+                self._close_locked()
+                self._ensure_connected_locked()
+                in_batch = 0
+            try:
+                response, plains = self._radio_read_once_locked(position)
+            except (OSError, ssl.SSLError, NiceBidiConnectionError):
+                self._close_locked()
+                self._ensure_connected_locked()
+                in_batch = 0
+                response, plains = self._radio_read_once_locked(position)
+            in_batch += 1
+            if "<Error>" in _printable(response):
+                if in_batch == 1:
+                    break
+                self._close_locked()
+                self._ensure_connected_locked()
+                in_batch = 0
+                continue
+            record = next(
+                (
+                    decoded
+                    for decoded in (decode_radio_record(plain) for plain in plains)
+                    if decoded is not None
+                ),
+                None,
+            )
+            if record is None:
+                position += 1
+                continue
+            if record.virgin:
+                break
+            if record.empty:
+                consecutive_empty += 1
+                if consecutive_empty >= 4:
+                    break
+                position += 1
+                continue
+            consecutive_empty = 0
+            records.append(record)
+            position += 1
+        return NiceTransmitterSnapshot.from_records(records)
 
     def _t4_request_locked(
         self,

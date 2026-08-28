@@ -29,6 +29,7 @@ from ..models.administration import (
     NiceLogSnapshot,
     NiceUserSnapshot,
 )
+from ..models.radio import NiceTransmitterSnapshot
 from ..protocol.nhk.administration import (
     interface_clock_for,
     validate_interface_name,
@@ -54,6 +55,7 @@ class NiceAdministrationController(OwnerBoundController):
         self.interface_log_snapshot: NiceLogSnapshot | None = None
         self.access_group_snapshot: NiceGroupSnapshot | None = None
         self.user_snapshot: NiceUserSnapshot | None = None
+        self.transmitter_snapshot: NiceTransmitterSnapshot | None = None
         self.administration_history: deque[NiceAdministrationOperation] = deque(
             maxlen=ADMINISTRATION_HISTORY_LIMIT
         )
@@ -244,6 +246,16 @@ class NiceAdministrationController(OwnerBoundController):
             read_only=True,
         )
         self.user_snapshot = replace(snapshot, retrieved_at=datetime.now(UTC))
+        self._notify_entities()
+
+    async def async_refresh_transmitters(self) -> None:
+        """Retrieve the transmitters stored in the radio receiver on demand."""
+        snapshot = await self._async_execute(
+            "refresh_transmitters",
+            self.client.read_transmitters,
+            read_only=True,
+        )
+        self.transmitter_snapshot = replace(snapshot, retrieved_at=datetime.now(UTC))
         self._notify_entities()
 
     async def async_approve_user(self, username: str) -> None:

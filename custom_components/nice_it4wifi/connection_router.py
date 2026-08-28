@@ -257,6 +257,9 @@ class NiceConnectionRouter:
     def read_pairings(self):
         return self._read("read_pairings")
 
+    def read_transmitters(self):
+        return self._read("read_transmitters")
+
     def approve_user(self, user_id: int, username: str) -> None:
         self._write("approve_user", user_id, username)
 

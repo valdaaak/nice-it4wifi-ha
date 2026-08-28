@@ -28,6 +28,7 @@ SERVICE_LIST_USERS = "list_users"
 SERVICE_APPROVE_USER = "approve_user"
 SERVICE_SET_USER_PERMISSION = "set_user_permission"
 SERVICE_DELETE_USER = "delete_user"
+SERVICE_LIST_TRANSMITTERS = "list_transmitters"
 
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"
 ATTR_USERNAME = "username"
@@ -40,6 +41,7 @@ _SERVICES = (
     SERVICE_APPROVE_USER,
     SERVICE_SET_USER_PERMISSION,
     SERVICE_DELETE_USER,
+    SERVICE_LIST_TRANSMITTERS,
 )
 
 _BASE_FIELDS = {vol.Optional(ATTR_CONFIG_ENTRY_ID): cv.string}
@@ -57,6 +59,7 @@ SET_USER_PERMISSION_SCHEMA = vol.Schema(
 DELETE_USER_SCHEMA = vol.Schema(
     {**_BASE_FIELDS, vol.Required(ATTR_USERNAME): cv.string}
 )
+LIST_TRANSMITTERS_SCHEMA = vol.Schema(_BASE_FIELDS)
 
 
 def _loaded_entries(hass: HomeAssistant) -> list:
@@ -119,6 +122,15 @@ def async_setup_services(hass: HomeAssistant) -> None:
         coordinator = _resolve_coordinator(hass, call)
         await coordinator.async_delete_user(call.data[ATTR_USERNAME])
 
+    async def async_list_transmitters(call: ServiceCall) -> ServiceResponse:
+        coordinator = _resolve_coordinator(hass, call)
+        await coordinator.async_refresh_transmitters()
+        snapshot = coordinator.transmitter_snapshot
+        transmitters = (
+            [tx.as_dict() for tx in snapshot.transmitters] if snapshot else []
+        )
+        return {"transmitters": transmitters}
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_LIST_USERS,
@@ -143,6 +155,13 @@ def async_setup_services(hass: HomeAssistant) -> None:
         SERVICE_DELETE_USER,
         async_delete_user,
         schema=DELETE_USER_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_LIST_TRANSMITTERS,
+        async_list_transmitters,
+        schema=LIST_TRANSMITTERS_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
     )
 
 

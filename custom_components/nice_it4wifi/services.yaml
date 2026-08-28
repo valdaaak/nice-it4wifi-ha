@@ -57,3 +57,12 @@ delete_user:
       selector:
         config_entry:
           integration: nice_it4wifi
+
+list_transmitters:
+  fields:
+    config_entry_id:
+      required: false
+      example: 0123456789ABCDEFGHJKMNPQRS
+      selector:
+        config_entry:
+          integration: nice_it4wifi
