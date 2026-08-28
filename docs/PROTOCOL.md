@@ -130,7 +130,69 @@ Then a DMP read:
 Percentage of open = `current_encoder / open_encoder * 100` (e.g. `387/3857 ≈ 10 %`). No
 calibration profile needed — it's a direct measured ratio.
 
-## 6. Gotchas
+## 6. Radio transmitters — OXI / OXIBD receiver
+
+The radio receiver is a separate BusT4 device reached through the same
+`T4_REQUEST`/DMP tunnel, at **`DAddress=0x00`, `DEndpoint=0x0A`**, device/group
+byte **`0x0A`**. Layouts recovered from the app's native `libnative-lib.so` and
+cross‑checked against the community BusT4 projects (pruwait / makstech / gashtaan).
+
+Unlike a control‑unit register read, a radio‑code message carries an explicit
+`offset` and `length` byte between the op and the payload:
+
+```
+group param  op   offset len  <payload…>
+0x0A  0x25   0x99 0x00   0x02 posHi posLo        # GET one code slot at position
+0x0A  0x25   0xA9 0x00   0x0A <10‑byte record>   # SET one code slot (add/delete)
+0x0A  0x26   0xA9 0x00   0x01 seconds            # SET learn‑mode window (0 = cancel)
+0x0A  0x20   0xA9 0x00   0x01 0xFF               # SET erase‑all (0x01 codes, 0x02 +keys)
+```
+
+- **Reply form:** a code read answers `… 0A 25 01 0A 00 <10‑byte record> …`
+  (op byte `0x01`, not the `0x19` register reply); the record starts at frame
+  byte 14. Read positions `0…N`; a **virgin** record (`serial == 0x0FFFFFFF`)
+  ends the used memory, an **empty** record (`serial/button/round == 0`) is a
+  freed slot.
+- **Per‑session read cap:** the interface rejects further raw reads after a
+  handful on one session — tear the NHK session down and re‑establish it every
+  few reads (this re‑enables raw T4).
+
+### 10‑byte code record
+
+```
+[0:2] position (big‑endian; 0xFFFF on write = auto‑assign a free slot)
+[2:5]+low nibble[5]  serial (28‑bit, little‑endian)
+[5] high nibble       button (physical button)
+[6:8] round           rolling‑code counter (little‑endian)
+[8] high nibble       functionMode2 (button function, see map)   low nibble t4Group
+[9] bit7..6 priority  bit5..4 remoteType (0 mono / 1 BiDi)        bits3..0 group abilitation
+```
+
+### functionMode2 → gate command (control‑unit receiver)
+
+Index into the app's own function picker — **not** the DEP bus byte:
+
+| code | command | code | command |
+|---|---|---|---|
+| 1 | Step by step | 8 | Partial opening 2 |
+| 2 | Partial opening 1 | 9 | Partial opening 3 |
+| 3 | Open | 10 / 11 | Open / Close and block |
+| 4 | Close | 12 / 13 | Block / Release automation |
+| 5 | Stop | 14 / 15 | Courtesy light timer / on‑off |
+| 6 | Condominium step by step | 7 | Step by step high priority |
+
+### Learn mode
+
+SET param `0x26` to a seconds window (the app uses 100) and re‑arm it every
+≤10 s while waiting; the receiver captures the next transmitter pressed nearby
+and stores it (poll the code list for the new record, or watch for event status
+`100`). Cancel with `0x26 = 0`. **Learn mode needs no key even on an OXIBD.**
+
+> **OXIBD caveat.** Direct code writes (`0A/25` SET) may require the receiver's
+> *O‑Manage* variant (an 11/12‑byte record and a session challenge) on an OXIBD;
+> learn mode (`0x26`) side‑steps it and is the reliable way to add a remote.
+
+## 7. Gotchas
 
 - **One session at a time.** HA holding a session blocks the phone apps and vice‑versa.
   A stuck session answers **code 15**; power‑cycling the interface clears it.
