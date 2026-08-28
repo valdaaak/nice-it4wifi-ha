@@ -94,12 +94,18 @@ from .protocol.t4.dmp import (
     parse_dmp_response,
 )
 from .protocol.t4.radio import (
+    RADIO_ACTIVATION_REARM_SECONDS,
+    RADIO_ACTIVATION_SECONDS,
     RADIO_MAX_POSITIONS,
     RADIO_READ_RECYCLE,
     RADIO_TARGET_ADDR,
     RADIO_TARGET_ENDPOINT,
+    build_radio_activation_frame,
+    build_radio_add_frame,
+    build_radio_delete_frame,
     build_radio_read_frame,
     decode_radio_record,
+    encode_radio_record,
 )
 from .protocol.t4.registers import (
     CONTROLLER_TARGET,
@@ -845,12 +851,17 @@ class NiceBidiClient:
         )
 
     def _read_transmitters_locked(self) -> NiceTransmitterSnapshot:
+        return NiceTransmitterSnapshot.from_records(
+            self._read_transmitter_records_locked()
+        )
+
+    def _read_transmitter_records_locked(self) -> list:
         """Enumerate radio-code slots, recycling the session past its read cap.
 
         The interface rejects further raw reads after a handful on one session,
         so every few positions the NHK session is torn down and re-established
         (which re-enables raw T4). A fresh session that still errors on its first
-        read means the used memory has ended.
+        read means the used memory has ended. Returns the non-empty RadioRecords.
         """
         records = []
         self._ensure_connected_locked()
@@ -899,7 +910,212 @@ class NiceBidiClient:
             consecutive_empty = 0
             records.append(record)
             position += 1
-        return NiceTransmitterSnapshot.from_records(records)
+        return records
+
+    def _radio_set_locked(self, frame: bytes) -> None:
+        """Send one radio memory write on a fresh raw session."""
+        self._close_locked()
+        self._ensure_connected_locked()
+        response, _ = self._t4_request_locked(
+            "DMP",
+            frame,
+            RADIO_TARGET_ADDR,
+            RADIO_TARGET_ENDPOINT,
+            self.t4_timeout_ms,
+        )
+        if "<Error>" in _printable(response):
+            raise NiceBidiConnectionError(_response_error_summary(response))
+
+    def delete_transmitter(self, serial: int, button: int | None = None) -> list:
+        """Delete the stored records matching a serial (and optional button).
+
+        Returns the removed RadioRecords (with their raw bytes) so the caller can
+        restore them if needed. The change is verified with a re-read.
+        """
+        with self._lock:
+            records = self._read_transmitter_records_locked()
+            targets = [
+                record
+                for record in records
+                if record.serial == serial
+                and (button is None or record.button == button)
+            ]
+            if not targets:
+                raise NiceBidiConnectionError(
+                    f"no transmitter 0x{serial:06X} to delete"
+                )
+            for target in targets:
+                self._radio_set_locked(
+                    build_radio_delete_frame(
+                        target.position, self._t4_iaddr, self._t4_iendp
+                    )
+                )
+            after = self._read_transmitter_records_locked()
+            remaining = [
+                record
+                for record in after
+                if any(
+                    record.serial == target.serial
+                    and record.button == target.button
+                    for target in targets
+                )
+            ]
+            if remaining:
+                raise NiceBidiConnectionError(
+                    "delete was acknowledged but some records remain"
+                )
+            return targets
+
+    def add_transmitter(self, record: list) -> object:
+        """Write one 10-byte radio-code record (position auto-assigned).
+
+        Verifies with a re-read and returns the matching stored RadioRecord.
+        """
+        serial = (
+            record[2]
+            | (record[3] << 8)
+            | (record[4] << 16)
+            | ((record[5] & 0x0F) << 24)
+        )
+        button = record[5] >> 4
+        with self._lock:
+            self._radio_set_locked(
+                build_radio_add_frame(record, self._t4_iaddr, self._t4_iendp)
+            )
+            after = self._read_transmitter_records_locked()
+            match = next(
+                (
+                    stored
+                    for stored in after
+                    if stored.serial == serial and stored.button == button
+                ),
+                None,
+            )
+            if match is None:
+                raise NiceBidiConnectionError(
+                    "add was acknowledged but the transmitter did not appear"
+                )
+            return match
+
+    def add_transmitter_by_fields(
+        self,
+        serial: int,
+        button: int,
+        command: int,
+        *,
+        remote_type: int = 0,
+        round_: int = 0,
+        t4_group: int = 0,
+        priority: int = 0,
+        group_abilitation: int = 0,
+    ) -> object:
+        """Build a radio-code record from fields and store it."""
+        record = encode_radio_record(
+            serial,
+            button,
+            command,
+            remote_type=remote_type,
+            round_=round_,
+            t4_group=t4_group,
+            priority=priority,
+            group_abilitation=group_abilitation,
+        )
+        return self.add_transmitter(record)
+
+    def set_transmitter_command(
+        self, serial: int, button: int, new_command: int
+    ) -> object:
+        """Reassign a stored button's command, preserving its other fields."""
+        with self._lock:
+            records = self._read_transmitter_records_locked()
+            target = next(
+                (
+                    record
+                    for record in records
+                    if record.serial == serial and record.button == button
+                ),
+                None,
+            )
+            if target is None:
+                raise NiceBidiConnectionError(
+                    f"no transmitter 0x{serial:06X} button {button} to change"
+                )
+            self._radio_set_locked(
+                build_radio_delete_frame(
+                    target.position, self._t4_iaddr, self._t4_iendp
+                )
+            )
+            record = encode_radio_record(
+                target.serial,
+                target.button,
+                new_command,
+                remote_type=target.remote_type,
+                round_=target.round,
+                t4_group=target.t4_group,
+                priority=target.priority,
+                group_abilitation=target.group_abilitation,
+            )
+            self._radio_set_locked(
+                build_radio_add_frame(record, self._t4_iaddr, self._t4_iendp)
+            )
+            after = self._read_transmitter_records_locked()
+            match = next(
+                (
+                    stored
+                    for stored in after
+                    if stored.serial == serial
+                    and stored.button == button
+                    and stored.command == new_command
+                ),
+                None,
+            )
+            if match is None:
+                raise NiceBidiConnectionError(
+                    "reassign was acknowledged but verification failed"
+                )
+            return match
+
+    def _arm_radio_learning(self, seconds: int) -> None:
+        self._radio_set_locked(
+            build_radio_activation_frame(seconds, self._t4_iaddr, self._t4_iendp)
+        )
+
+    def learn_transmitter(self, timeout: int = 60) -> list:
+        """Arm the receiver's learn mode and return transmitters captured.
+
+        Sends the radio-activation SET, re-arms it periodically, and watches the
+        stored-code list for new records while the user presses a button on the
+        new remote near the receiver. Cancels learn mode on the way out.
+        """
+        with self._lock:
+            return self._learn_transmitter_locked(timeout)
+
+    def _learn_transmitter_locked(self, timeout: int) -> list:
+        before = {
+            (record.serial, record.button)
+            for record in self._read_transmitter_records_locked()
+        }
+        deadline = time.monotonic() + max(5, min(timeout, 180))
+        last_arm = 0.0
+        try:
+            while time.monotonic() < deadline:
+                if time.monotonic() - last_arm >= RADIO_ACTIVATION_REARM_SECONDS:
+                    self._arm_radio_learning(RADIO_ACTIVATION_SECONDS)
+                    last_arm = time.monotonic()
+                time.sleep(2.5)
+                learned = [
+                    record
+                    for record in self._read_transmitter_records_locked()
+                    if (record.serial, record.button) not in before
+                ]
+                if learned:
+                    return learned
+            return []
+        finally:
+            try:
+                self._arm_radio_learning(0)
+            except (OSError, ssl.SSLError, NiceBidiConnectionError):
+                _LOGGER.debug("Nice radio learn-mode cancel failed", exc_info=True)
 
     def _t4_request_locked(
         self,

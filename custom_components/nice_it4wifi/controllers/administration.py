@@ -44,6 +44,7 @@ ADMINISTRATION_HISTORY_LIMIT = 16
 NAME_VERIFICATION = "info_name_round_trip"
 TIME_VERIFICATION = "info_clock_round_trip"
 USER_VERIFICATION = "pairings_round_trip"
+RADIO_VERIFICATION = "radio_read_back"
 CLOCK_TOLERANCE_SECONDS = 120
 
 
@@ -257,6 +258,54 @@ class NiceAdministrationController(OwnerBoundController):
         )
         self.transmitter_snapshot = replace(snapshot, retrieved_at=datetime.now(UTC))
         self._notify_entities()
+
+    async def async_delete_transmitter(
+        self, serial: int, button: int | None = None
+    ) -> list:
+        """Delete a stored transmitter (all buttons, or one) and return removed."""
+        return await self._async_execute(
+            "delete_transmitter",
+            lambda: self.client.delete_transmitter(serial, button),
+            read_only=False,
+            verification=RADIO_VERIFICATION,
+        )
+
+    async def async_add_transmitter(
+        self,
+        serial: int,
+        button: int,
+        command: int,
+        **fields,
+    ) -> object:
+        """Store a transmitter record built from fields; return the stored record."""
+        return await self._async_execute(
+            "add_transmitter",
+            lambda: self.client.add_transmitter_by_fields(
+                serial, button, command, **fields
+            ),
+            read_only=False,
+            verification=RADIO_VERIFICATION,
+        )
+
+    async def async_set_transmitter_command(
+        self, serial: int, button: int, new_command: int
+    ) -> object:
+        """Reassign a stored button's command and return the updated record."""
+        return await self._async_execute(
+            "set_transmitter_command",
+            lambda: self.client.set_transmitter_command(serial, button, new_command),
+            read_only=False,
+            verification=RADIO_VERIFICATION,
+        )
+
+    async def async_learn_transmitter(self, timeout: int = 60) -> list:
+        """Arm the receiver's learn mode; return transmitters captured, if any."""
+        return await self._async_execute(
+            "learn_transmitter",
+            lambda: self.client.learn_transmitter(timeout),
+            read_only=False,
+            verification=RADIO_VERIFICATION,
+        )
 
     async def async_approve_user(self, username: str) -> None:
         """Approve one pending user and verify it became confirmed."""

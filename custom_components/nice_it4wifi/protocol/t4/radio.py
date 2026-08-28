@@ -23,6 +23,12 @@ RADIO_TARGET_ENDPOINT = 0x0A
 # Device-target ("whose") byte and the code-in-memory register.
 RADIO_GROUP = 0x0A
 RADIO_CODE_PARAM = 0x25
+# Radio-activation (learn mode) register: SET a seconds window (0 = cancel),
+# re-armed periodically while a new transmitter is expected. Works for mono and
+# BiDi and needs no key/certificate step (unlike direct protected-memory writes).
+RADIO_ACTIVATION_PARAM = 0x26
+RADIO_ACTIVATION_SECONDS = 100
+RADIO_ACTIVATION_REARM_SECONDS = 8
 # Safety bound and per-session read budget: the interface rejects further raw
 # reads after a handful on one session, so the caller recycles the session.
 RADIO_MAX_POSITIONS = 64
@@ -99,8 +105,23 @@ class RadioRecord:
     command: int
     round: int
     remote_type: int
+    t4_group: int
+    priority: int
+    group_abilitation: int
+    raw: str
     empty: bool
     virgin: bool
+
+    def as_dict(self) -> dict[str, object]:
+        """Serialize a transmitter-button record for a service response."""
+        return {
+            "serial": self.serial,
+            "serial_hex": f"{self.serial:06X}",
+            "button": self.button,
+            "command": self.command,
+            "command_name": radio_command_name(self.command),
+            "type": "bidi" if self.remote_type == REMOTE_TYPE_BIDI else "mono",
+        }
 
 
 def decode_radio_record(plain: bytes) -> RadioRecord | None:
@@ -128,6 +149,10 @@ def decode_radio_record(plain: bytes) -> RadioRecord | None:
             command=0,
             round=0,
             remote_type=REMOTE_TYPE_MONO,
+            t4_group=0,
+            priority=0,
+            group_abilitation=0,
+            raw=record[:10].hex(),
             empty=False,
             virgin=True,
         )
@@ -149,6 +174,106 @@ def decode_radio_record(plain: bytes) -> RadioRecord | None:
         command=command,
         round=round_,
         remote_type=remote_type,
+        t4_group=record[8] & 0x0F,
+        priority=record[9] >> 6,
+        group_abilitation=record[9] & 0x0F,
+        raw=record[:10].hex(),
         empty=empty,
         virgin=False,
     )
+
+
+def encode_radio_record(
+    serial: int,
+    button: int,
+    command: int,
+    *,
+    remote_type: int = REMOTE_TYPE_MONO,
+    round_: int = 0,
+    t4_group: int = 0,
+    priority: int = 0,
+    group_abilitation: int = 0,
+    position: int = 0xFFFF,
+) -> list[int]:
+    """Build the 10-byte radio-code record (position 0xFFFF = auto-assign)."""
+    byte5 = ((serial >> 24) & 0x0F) | ((button & 0x0F) << 4)
+    return [
+        (position >> 8) & 0xFF,
+        position & 0xFF,
+        serial & 0xFF,
+        (serial >> 8) & 0xFF,
+        (serial >> 16) & 0xFF,
+        byte5,
+        round_ & 0xFF,
+        (round_ >> 8) & 0xFF,
+        ((command & 0x0F) << 4) | (t4_group & 0x0F),
+        ((priority & 0x03) << 6) | ((remote_type & 0x03) << 4) | (group_abilitation & 0x0F),
+    ]
+
+
+def _build_radio_set_frame(
+    record: list[int],
+    iaddr: int,
+    iendp: int,
+    *,
+    daddr: int = RADIO_TARGET_ADDR,
+    dendpoint: int = RADIO_TARGET_ENDPOINT,
+) -> bytes:
+    args = [RADIO_GROUP, RADIO_CODE_PARAM, 0xA9, 0x00, len(record), *record]
+    sublen = len(args) + 1
+    marker = iaddr ^ iendp ^ 0x08 ^ sublen ^ daddr ^ dendpoint
+    body = [daddr, dendpoint, iaddr, iendp, 0x08, sublen, marker, *args, dmp_checksum(*args)]
+    length = len(body)
+    return bytes([0x55, length, *body, length])
+
+
+def build_radio_delete_frame(
+    position: int,
+    iaddr: int,
+    iendp: int,
+    *,
+    daddr: int = RADIO_TARGET_ADDR,
+    dendpoint: int = RADIO_TARGET_ENDPOINT,
+) -> bytes:
+    """Build a DMP SET frame that frees (deletes) one radio-code slot."""
+    if not 0 <= position <= 0xFFFF:
+        raise ValueError("position must fit in 16 bits")
+    record = [(position >> 8) & 0xFF, position & 0xFF, 0, 0, 0, 0, 0, 0, 0, 0]
+    return _build_radio_set_frame(
+        record, iaddr, iendp, daddr=daddr, dendpoint=dendpoint
+    )
+
+
+def build_radio_add_frame(
+    record: list[int],
+    iaddr: int,
+    iendp: int,
+    *,
+    daddr: int = RADIO_TARGET_ADDR,
+    dendpoint: int = RADIO_TARGET_ENDPOINT,
+) -> bytes:
+    """Build a DMP SET frame that writes one radio-code record."""
+    if len(record) != 10:
+        raise ValueError("record must be 10 bytes")
+    return _build_radio_set_frame(
+        record, iaddr, iendp, daddr=daddr, dendpoint=dendpoint
+    )
+
+
+def build_radio_activation_frame(
+    seconds: int,
+    iaddr: int,
+    iendp: int,
+    *,
+    daddr: int = RADIO_TARGET_ADDR,
+    dendpoint: int = RADIO_TARGET_ENDPOINT,
+) -> bytes:
+    """Build a DMP SET frame that arms (seconds>0) or cancels (0) learn mode."""
+    if not 0 <= seconds <= 0xFF:
+        raise ValueError("seconds must fit in a byte")
+    args = [RADIO_GROUP, RADIO_ACTIVATION_PARAM, 0xA9, 0x00, 1, seconds & 0xFF]
+    sublen = len(args) + 1
+    marker = iaddr ^ iendp ^ 0x08 ^ sublen ^ daddr ^ dendpoint
+    body = [daddr, dendpoint, iaddr, iendp, 0x08, sublen, marker, *args, dmp_checksum(*args)]
+    length = len(body)
+    return bytes([0x55, length, *body, length])

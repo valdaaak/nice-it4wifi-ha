@@ -260,6 +260,27 @@ class NiceConnectionRouter:
     def read_transmitters(self):
         return self._read("read_transmitters")
 
+    def _invoke_once(self, method: str, *args, **kwargs):
+        """Run a returning operation once on the selected route (no replay)."""
+        with self._lock:
+            return self._call(self._selected, method, *args, **kwargs)
+
+    def delete_transmitter(self, serial: int, button: int | None = None):
+        return self._invoke_once("delete_transmitter", serial, button)
+
+    def add_transmitter_by_fields(self, serial: int, button: int, command: int, **kwargs):
+        return self._invoke_once(
+            "add_transmitter_by_fields", serial, button, command, **kwargs
+        )
+
+    def set_transmitter_command(self, serial: int, button: int, new_command: int):
+        return self._invoke_once(
+            "set_transmitter_command", serial, button, new_command
+        )
+
+    def learn_transmitter(self, timeout: int = 60):
+        return self._invoke_once("learn_transmitter", timeout)
+
     def approve_user(self, user_id: int, username: str) -> None:
         self._write("approve_user", user_id, username)
 

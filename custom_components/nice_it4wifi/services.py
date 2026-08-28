@@ -29,10 +29,19 @@ SERVICE_APPROVE_USER = "approve_user"
 SERVICE_SET_USER_PERMISSION = "set_user_permission"
 SERVICE_DELETE_USER = "delete_user"
 SERVICE_LIST_TRANSMITTERS = "list_transmitters"
+SERVICE_DELETE_TRANSMITTER = "delete_transmitter"
+SERVICE_ADD_TRANSMITTER = "add_transmitter"
+SERVICE_SET_TRANSMITTER_COMMAND = "set_transmitter_command"
+SERVICE_LEARN_TRANSMITTER = "learn_transmitter"
 
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"
 ATTR_USERNAME = "username"
 ATTR_PERMISSION = "permission"
+ATTR_SERIAL = "serial"
+ATTR_BUTTON = "button"
+ATTR_COMMAND = "command"
+ATTR_TYPE = "type"
+ATTR_TIMEOUT = "timeout"
 
 SETTABLE_PERMISSIONS = ("admin", "user", "disable")
 
@@ -42,7 +51,23 @@ _SERVICES = (
     SERVICE_SET_USER_PERMISSION,
     SERVICE_DELETE_USER,
     SERVICE_LIST_TRANSMITTERS,
+    SERVICE_DELETE_TRANSMITTER,
+    SERVICE_ADD_TRANSMITTER,
+    SERVICE_SET_TRANSMITTER_COMMAND,
+    SERVICE_LEARN_TRANSMITTER,
 )
+
+
+def _parse_serial(value: str) -> int:
+    """Parse a transmitter serial given as decimal or 0x-prefixed hex."""
+    text = str(value).strip()
+    try:
+        return int(text, 16) if text.lower().startswith("0x") else int(text, 10)
+    except ValueError as err:
+        raise HomeAssistantError(
+            f"invalid serial {value!r}: use the decimal serial from list_transmitters "
+            "or a 0x-prefixed hex value"
+        ) from err
 
 _BASE_FIELDS = {vol.Optional(ATTR_CONFIG_ENTRY_ID): cv.string}
 LIST_USERS_SCHEMA = vol.Schema(_BASE_FIELDS)
@@ -60,6 +85,38 @@ DELETE_USER_SCHEMA = vol.Schema(
     {**_BASE_FIELDS, vol.Required(ATTR_USERNAME): cv.string}
 )
 LIST_TRANSMITTERS_SCHEMA = vol.Schema(_BASE_FIELDS)
+DELETE_TRANSMITTER_SCHEMA = vol.Schema(
+    {
+        **_BASE_FIELDS,
+        vol.Required(ATTR_SERIAL): cv.string,
+        vol.Optional(ATTR_BUTTON): vol.All(vol.Coerce(int), vol.Range(min=0, max=15)),
+    }
+)
+ADD_TRANSMITTER_SCHEMA = vol.Schema(
+    {
+        **_BASE_FIELDS,
+        vol.Required(ATTR_SERIAL): cv.string,
+        vol.Required(ATTR_BUTTON): vol.All(vol.Coerce(int), vol.Range(min=1, max=15)),
+        vol.Required(ATTR_COMMAND): vol.All(vol.Coerce(int), vol.Range(min=1, max=15)),
+        vol.Optional(ATTR_TYPE, default="mono"): vol.In(("mono", "bidi")),
+    }
+)
+SET_TRANSMITTER_COMMAND_SCHEMA = vol.Schema(
+    {
+        **_BASE_FIELDS,
+        vol.Required(ATTR_SERIAL): cv.string,
+        vol.Required(ATTR_BUTTON): vol.All(vol.Coerce(int), vol.Range(min=1, max=15)),
+        vol.Required(ATTR_COMMAND): vol.All(vol.Coerce(int), vol.Range(min=1, max=15)),
+    }
+)
+LEARN_TRANSMITTER_SCHEMA = vol.Schema(
+    {
+        **_BASE_FIELDS,
+        vol.Optional(ATTR_TIMEOUT, default=60): vol.All(
+            vol.Coerce(int), vol.Range(min=5, max=180)
+        ),
+    }
+)
 
 
 def _loaded_entries(hass: HomeAssistant) -> list:
@@ -131,6 +188,39 @@ def async_setup_services(hass: HomeAssistant) -> None:
         )
         return {"transmitters": transmitters}
 
+    async def async_delete_transmitter(call: ServiceCall) -> ServiceResponse:
+        coordinator = _resolve_coordinator(hass, call)
+        removed = await coordinator.async_delete_transmitter(
+            _parse_serial(call.data[ATTR_SERIAL]),
+            call.data.get(ATTR_BUTTON),
+        )
+        return {"removed": [record.as_dict() for record in removed]}
+
+    async def async_add_transmitter(call: ServiceCall) -> ServiceResponse:
+        coordinator = _resolve_coordinator(hass, call)
+        remote_type = 1 if call.data[ATTR_TYPE] == "bidi" else 0
+        record = await coordinator.async_add_transmitter(
+            _parse_serial(call.data[ATTR_SERIAL]),
+            call.data[ATTR_BUTTON],
+            call.data[ATTR_COMMAND],
+            remote_type=remote_type,
+        )
+        return {"added": record.as_dict()}
+
+    async def async_set_transmitter_command(call: ServiceCall) -> ServiceResponse:
+        coordinator = _resolve_coordinator(hass, call)
+        record = await coordinator.async_set_transmitter_command(
+            _parse_serial(call.data[ATTR_SERIAL]),
+            call.data[ATTR_BUTTON],
+            call.data[ATTR_COMMAND],
+        )
+        return {"transmitter": record.as_dict()}
+
+    async def async_learn_transmitter(call: ServiceCall) -> ServiceResponse:
+        coordinator = _resolve_coordinator(hass, call)
+        learned = await coordinator.async_learn_transmitter(call.data[ATTR_TIMEOUT])
+        return {"learned": [record.as_dict() for record in learned]}
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_LIST_USERS,
@@ -162,6 +252,34 @@ def async_setup_services(hass: HomeAssistant) -> None:
         async_list_transmitters,
         schema=LIST_TRANSMITTERS_SCHEMA,
         supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_DELETE_TRANSMITTER,
+        async_delete_transmitter,
+        schema=DELETE_TRANSMITTER_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_ADD_TRANSMITTER,
+        async_add_transmitter,
+        schema=ADD_TRANSMITTER_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SET_TRANSMITTER_COMMAND,
+        async_set_transmitter_command,
+        schema=SET_TRANSMITTER_COMMAND_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_LEARN_TRANSMITTER,
+        async_learn_transmitter,
+        schema=LEARN_TRANSMITTER_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
     )
 
 

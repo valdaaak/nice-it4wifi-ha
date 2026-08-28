@@ -51,21 +51,32 @@ lower its permission, so the integration can't be locked out of the gate.
 Account names are identifying data, so they are returned only in the on-demand
 `list_users` response — never stored in entity state, attributes, or diagnostics.
 
-## Radio transmitters (read)
+## Radio transmitters
 
-List the radio transmitters (remotes) stored in the gate's radio receiver —
+Manage the radio transmitters (remotes) stored in the gate's radio receiver —
 handy when the MyNice app's receiver management no longer works for an IT4WIFI.
 
-- `nice_it4wifi.list_transmitters` — returns each stored transmitter with its
-  serial, type (`mono`/`bidi`) and, for every programmed button, the gate command
-  it triggers (e.g. `Step by step`, `Partial opening 1`, `Open`, `Close`) —
-  response data.
+- `nice_it4wifi.list_transmitters` — each stored transmitter with its serial,
+  type (`mono`/`bidi`) and, per button, the gate command it triggers (e.g.
+  `Step by step`, `Partial opening 1`, `Open`, `Close`) — response data.
+- `nice_it4wifi.learn_transmitter` — arm the receiver's learn mode, then press a
+  button on the new remote near the receiver; returns what was captured. Works
+  for mono and BiDi and needs no serial (the recommended way to add a remote).
+- `nice_it4wifi.add_transmitter` — add a remote by serial + button + command.
+- `nice_it4wifi.delete_transmitter` — remove a remote (all buttons or one);
+  returns the removed records so they can be restored.
+- `nice_it4wifi.set_transmitter_command` — change what command a stored button
+  triggers.
 
-It reads the OXI/OXIBD code memory over BusT4 (DMP group `0x0A`, param `0x25`),
-recycling the NHK session to get past the interface's per-session raw-read cap,
-and stops at the end of the used memory. This is **read-only**; adding and
-deleting transmitters are not exposed (writes to the receiver memory are out of
-scope here). See [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the frame details.
+It reads/writes the OXI/OXIBD code memory over BusT4 (DMP group `0x0A`, param
+`0x25`; learn mode is param `0x26`), recycling the NHK session to get past the
+interface's per-session raw-read cap, and every write is verified by reading the
+memory back. See [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the frame details.
+
+> **Writes change the receiver's programming.** Try `learn_transmitter` first —
+> it needs no key even on an OXIBD. Direct `add_transmitter` / `delete_transmitter`
+> writes on an **OXIBD** may need the receiver's O-Manage/challenge variant, which
+> this integration does not implement; verify on-site before relying on them.
 
 ## Known limitations
 

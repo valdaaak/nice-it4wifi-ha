@@ -291,6 +291,86 @@
           "description": "Which gate to query. Optional when only one Nice IT4WIFI gate is configured."
         }
       }
+    },
+    "delete_transmitter": {
+      "name": "Delete transmitter",
+      "description": "Remove a stored radio transmitter (all its buttons, or a single button) from the receiver. Returns the removed entries so they can be restored.",
+      "fields": {
+        "serial": {
+          "name": "Serial",
+          "description": "Transmitter serial: the decimal 'serial' from List transmitters, or a 0x-prefixed hex value."
+        },
+        "button": {
+          "name": "Button",
+          "description": "Optional: remove only this button; omit to remove all of the transmitter's buttons."
+        },
+        "config_entry_id": {
+          "name": "Gate",
+          "description": "Which gate to act on. Optional when only one gate is configured."
+        }
+      }
+    },
+    "add_transmitter": {
+      "name": "Add transmitter",
+      "description": "Store a radio transmitter by serial number. Reliable for mono (O-Code) remotes; a bidirectional remote may also require on-site learning.",
+      "fields": {
+        "serial": {
+          "name": "Serial",
+          "description": "Transmitter serial (decimal, or 0x-prefixed hex)."
+        },
+        "button": {
+          "name": "Button",
+          "description": "Physical button number to store (1-4)."
+        },
+        "command": {
+          "name": "Command",
+          "description": "Gate command code: 1=Step by step, 2=Partial opening 1, 3=Open, 4=Close, 5=Stop, 8/9=Partial opening 2/3, ..."
+        },
+        "type": {
+          "name": "Type",
+          "description": "mono (O-Code) or bidi (bidirectional)."
+        },
+        "config_entry_id": {
+          "name": "Gate",
+          "description": "Which gate to act on. Optional when only one gate is configured."
+        }
+      }
+    },
+    "set_transmitter_command": {
+      "name": "Reassign transmitter button",
+      "description": "Change the gate command a stored transmitter button triggers (deletes and re-adds the entry, preserving its other fields).",
+      "fields": {
+        "serial": {
+          "name": "Serial",
+          "description": "Transmitter serial (decimal, or 0x-prefixed hex)."
+        },
+        "button": {
+          "name": "Button",
+          "description": "The stored button to change."
+        },
+        "command": {
+          "name": "Command",
+          "description": "New gate command code: 1=Step by step, 2=Partial opening 1, 3=Open, 4=Close, 5=Stop, ..."
+        },
+        "config_entry_id": {
+          "name": "Gate",
+          "description": "Which gate to act on. Optional when only one gate is configured."
+        }
+      }
+    },
+    "learn_transmitter": {
+      "name": "Learn transmitter",
+      "description": "Put the gate's radio receiver into learning mode, then press a button on the new remote near the receiver. Returns the transmitter(s) captured. Works for mono and bidirectional remotes and needs no serial number.",
+      "fields": {
+        "timeout": {
+          "name": "Timeout",
+          "description": "How long to stay in learning mode, in seconds (5-180)."
+        },
+        "config_entry_id": {
+          "name": "Gate",
+          "description": "Which gate to act on. Optional when only one gate is configured."
+        }
+      }
     }
   }
 }

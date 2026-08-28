@@ -123,6 +123,21 @@ it stops at the first virgin slot. Exposed read-only as
 
 ---
 
+## 9. Radio transmitter write + learn services (fork addition)
+
+Beyond listing, the fork can manage the receiver's transmitter memory:
+`add_transmitter` (by serial), `delete_transmitter` (returns removed records for
+restore), `set_transmitter_command` (reassign a button's function), and
+`learn_transmitter` (arm the receiver and capture a remote pressed on-site). All
+ride DMP SET to the OXI (group `0x0A`, param `0x25` for codes, `0x26` for the
+learn-mode activation window — re-armed periodically), each verified by reading
+the memory back. The frame/record layout and the activation register were
+recovered by disassembling the app's native `libnative-lib.so`. Learn mode needs
+no key even on an OXIBD; direct code writes on an OXIBD may need the O-Manage /
+challenge variant (not implemented) — hence learn mode is the recommended add path.
+
+---
+
 ## Note on calibration
 
 Position calibration is **not needed** on encoder gates and **fails** on a fast gate
