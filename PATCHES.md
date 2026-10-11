@@ -138,6 +138,25 @@ challenge variant (not implemented) — hence learn mode is the recommended add 
 
 ---
 
+## 10. `protocol/t4/live.py` — direction comes from NHK `DoorStatus` only
+
+The interface wraps raw T4 bus traffic into its CHANGE events and upstream decodes
+the `04/40` live payload (state byte + instant position) and `04/02` (state byte)
+into the cover state. On the SG01a the `04/40` state byte reports **`opening` while
+the gate is closing** (its position is mirrored the same way: ~97 % at the closed
+endpoint), while the NHK `DoorStatus` in the same stream is correct. The two sources
+overwrote each other once a second — `closing` from `DoorStatus` for a few hundred
+milliseconds, then `opening` from `04/40` — so `cover.brana` sat in `opening` for the
+whole closing run and anything triggered on `to: opening` fired on every close.
+
+Fix: a live T4 payload never applies `opening`/`closing`. `04/40` contributes position
+only, `04/02` only its terminal states (`open`/`closed`/`stopped`, which match reality).
+`DoorStatus` alone decides the direction. The `NHK/T4StatusIgnored` register now names
+the reason (`04/40_position_only`, `04/02_direction_ignored`) and `state_source` no
+longer reports `t4_04_40_motion`.
+
+---
+
 ## Note on calibration
 
 Position calibration is **not needed** on encoder gates and **fails** on a fast gate

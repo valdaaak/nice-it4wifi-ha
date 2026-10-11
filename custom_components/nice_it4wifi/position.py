@@ -295,8 +295,6 @@ class NiceBidiPositionController(OwnerBoundController["NiceBidiDataUpdateCoordin
         t4_state = registers.get("NHK/T4Status")
         if payload_kind == "04/02" and t4_state == status.state:
             return "t4_04_02"
-        if payload_kind == "04/40" and t4_state == status.state:
-            return "t4_04_40_motion"
         if "NHK/DoorStatus" in registers:
             return "nhk_door_status"
         if "04/01" in registers:

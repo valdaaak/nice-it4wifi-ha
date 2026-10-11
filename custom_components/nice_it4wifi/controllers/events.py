@@ -10,8 +10,9 @@ import logging
 
 from ..errors import NiceProtocolError
 from ..models.events import NiceEvent, NiceEventKind
-from ..models.status import STATE_CLOSING, STATE_OPENING, NiceStatus
+from ..models.status import NiceStatus
 from ..protocol.nhk.events import parse_nhk_event_frame
+from ..protocol.t4.live import live_state_ignored_reason
 from .base import OwnerBoundController
 
 _LOGGER = logging.getLogger(__name__)
@@ -168,10 +169,11 @@ class NiceEventController(OwnerBoundController):
             registers["NHK/T4InstantPositionRaw"] = str(event.t4_raw_position)
         if event.t4_position_scale is not None:
             registers["NHK/T4InstantPositionScale"] = event.t4_position_scale
-        if event.t4_payload_kind == "04/40":
+        if event.t4_payload_kind is not None:
             registers.pop("NHK/T4StatusIgnored", None)
-            if event.t4_state not in {None, STATE_OPENING, STATE_CLOSING}:
-                registers["NHK/T4StatusIgnored"] = "04/40_position_only"
+            ignored_reason = live_state_ignored_reason(event.t4_payload_kind, event.t4_state)
+            if ignored_reason is not None:
+                registers["NHK/T4StatusIgnored"] = ignored_reason
         if event.obstruction is not None:
             updates["obstacle"] = event.obstruction
             registers["NHK/Obstruct"] = str(event.obstruction).lower()

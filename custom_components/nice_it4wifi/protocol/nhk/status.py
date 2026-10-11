@@ -11,6 +11,7 @@ from ..t4.codec import decrypt_t4_payloads_from_frame
 from ..t4.live import (
     CuwifiLiveStatus,
     effective_live_state,
+    live_state_ignored_reason,
     parse_cuwifi_live_status_payload,
 )
 from .codec import xml_payload
@@ -146,12 +147,9 @@ def merge_cuwifi_live_status(
     position = live_status.position if live_status.position is not None else status.position
     applied_live_state = effective_live_state(live_status)
     state = applied_live_state or status.state
-    if (
-        live_status.state is not None
-        and applied_live_state is None
-        and live_status.state != status.state
-    ):
-        registers["NHK/T4StatusIgnored"] = "04/40_position_only"
+    ignored_reason = live_state_ignored_reason(live_status.payload_kind, live_status.state)
+    if ignored_reason is not None and live_status.state != status.state:
+        registers["NHK/T4StatusIgnored"] = ignored_reason
     return replace(status, state=state, position=position, registers=registers)
 
 

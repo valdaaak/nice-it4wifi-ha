@@ -118,9 +118,27 @@ def parse_cuwifi_live_status_payload(plain: bytes) -> CuwifiLiveStatus | None:
 
 def effective_live_state(live_status: CuwifiLiveStatus) -> str | None:
     """Return the state that a live T4 payload may apply to device state."""
-    if live_status.payload_kind == "04/40" and not movement_state(live_status):
+    if live_state_ignored_reason(live_status.payload_kind, live_status.state) is not None:
         return None
     return live_status.state
+
+
+def live_state_ignored_reason(payload_kind: str, state: str | None) -> str | None:
+    """Return why a live T4 state must not drive the device state, or None.
+
+    Live T4 payloads never decide the direction of travel: the NHK ``DoorStatus``
+    is authoritative for ``opening``/``closing``. On an SG01a (ROBUS) control unit
+    the ``04/40`` motion byte reports ``opening`` while the gate is closing, and the
+    two sources overwrote each other every second. ``04/40`` therefore contributes
+    position only and ``04/02`` contributes its terminal states only.
+    """
+    if state is None:
+        return None
+    if payload_kind == "04/40":
+        return "04/40_position_only"
+    if state in {STATE_OPENING, STATE_CLOSING}:
+        return f"{payload_kind}_direction_ignored"
+    return None
 
 
 def movement_state(live_status: CuwifiLiveStatus) -> bool:
