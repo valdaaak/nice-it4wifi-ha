@@ -14,14 +14,37 @@ class NiceTransmitterButton:
 
     button: int
     command: int
+    position: int | None = None
+    round: int | None = None
+    t4_group: int | None = None
+    priority: int | None = None
+    group_abilitation: int | None = None
+    raw: str | None = None
 
     def as_dict(self) -> dict[str, object]:
-        """Serialize the button number, function code and its readable name."""
-        return {
+        """Serialize the button number, function code and its readable name.
+
+        When the raw slot bytes are known the diagnostic fields of the record
+        (slot position, rolling-code round, T4 group, priority, group abilitation
+        and the raw 10-byte record) are included as well.
+        """
+        data: dict[str, object] = {
             "button": self.button,
             "command": self.command,
             "command_name": radio_command_name(self.command),
         }
+        if self.raw is not None:
+            data.update(
+                {
+                    "position": self.position,
+                    "round": self.round,
+                    "t4_group": self.t4_group,
+                    "priority": self.priority,
+                    "group_abilitation": self.group_abilitation,
+                    "raw": self.raw,
+                }
+            )
+        return data
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +92,7 @@ class NiceTransmitterSnapshot:
         Empty and virgin slots are ignored; buttons of the same serial are merged.
         """
         order: list[int] = []
-        functions: dict[int, dict[int, int]] = {}
+        functions: dict[int, dict[int, object]] = {}
         rtype: dict[int, int] = {}
         used = 0
         for record in records:
@@ -80,14 +103,23 @@ class NiceTransmitterSnapshot:
                 functions[record.serial] = {}
                 rtype[record.serial] = record.remote_type
                 order.append(record.serial)
-            functions[record.serial][record.button] = record.command
+            functions[record.serial][record.button] = record
         transmitters = tuple(
             NiceTransmitter(
                 serial=serial,
                 remote_type=rtype[serial],
                 buttons=tuple(
-                    NiceTransmitterButton(button=button, command=command)
-                    for button, command in sorted(functions[serial].items())
+                    NiceTransmitterButton(
+                        button=button,
+                        command=record.command,
+                        position=getattr(record, "position", None),
+                        round=getattr(record, "round", None),
+                        t4_group=getattr(record, "t4_group", None),
+                        priority=getattr(record, "priority", None),
+                        group_abilitation=getattr(record, "group_abilitation", None),
+                        raw=getattr(record, "raw", None),
+                    )
+                    for button, record in sorted(functions[serial].items())
                 ),
             )
             for serial in order
