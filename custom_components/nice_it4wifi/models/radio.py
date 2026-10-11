@@ -20,13 +20,19 @@ class NiceTransmitterButton:
     priority: int | None = None
     group_abilitation: int | None = None
     raw: str | None = None
+    battery_level: int | None = None
+    remote_protocol: int | None = None
+    remote_model: int | None = None
+    len12: bool = False
 
     def as_dict(self) -> dict[str, object]:
         """Serialize the button number, function code and its readable name.
 
         When the raw slot bytes are known the diagnostic fields of the record
         (slot position, rolling-code round, T4 group, priority, group abilitation
-        and the raw 10-byte record) are included as well.
+        and the raw record) are included as well. For a 12-byte "OMng" record the
+        remote protocol and model are added; for a bidirectional remote the
+        battery-level nibble is reported in place of the group abilitation.
         """
         data: dict[str, object] = {
             "button": self.button,
@@ -44,6 +50,11 @@ class NiceTransmitterButton:
                     "raw": self.raw,
                 }
             )
+            if self.battery_level is not None:
+                data["battery_level"] = self.battery_level
+            if self.len12:
+                data["remote_protocol"] = self.remote_protocol
+                data["remote_model"] = self.remote_model
         return data
 
 
@@ -118,6 +129,14 @@ class NiceTransmitterSnapshot:
                         priority=getattr(record, "priority", None),
                         group_abilitation=getattr(record, "group_abilitation", None),
                         raw=getattr(record, "raw", None),
+                        battery_level=(
+                            getattr(record, "battery_level", None)
+                            if getattr(record, "remote_type", 0) == 1
+                            else None
+                        ),
+                        remote_protocol=getattr(record, "remote_protocol", None),
+                        remote_model=getattr(record, "remote_model", None),
+                        len12=getattr(record, "len12", False),
                     )
                     for button, record in sorted(functions[serial].items())
                 ),

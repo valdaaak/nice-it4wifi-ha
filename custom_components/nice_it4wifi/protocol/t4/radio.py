@@ -97,7 +97,19 @@ def build_radio_read_frame(
 
 @dataclass(frozen=True, slots=True)
 class RadioRecord:
-    """One decoded radio-code memory slot."""
+    """One decoded radio-code memory slot.
+
+    A slot is stored by the receiver as either a 10-byte record (mono/Flor
+    receivers) or a 12-byte "OMng" record (OXIBD and other bidirectional-capable
+    receivers, which append ``remote_protocol`` and ``remote_model``). The
+    receiver answers reads with whichever width it uses, so ``len12`` reflects
+    the record width the receiver reported and tells the writer which form to
+    write back (see ``encode_radio_record_omng``).
+
+    byte[9] low nibble is overloaded by remote type: on a mono record it is the
+    T4 abilitation group; on a bidirectional record it is the battery-level
+    nibble (the app reports ``nibble // 4``) and the abilitation group reads 0.
+    """
 
     position: int
     serial: int
@@ -111,10 +123,14 @@ class RadioRecord:
     raw: str
     empty: bool
     virgin: bool
+    battery_level: int = 0
+    remote_protocol: int = 0
+    remote_model: int = 0
+    len12: bool = False
 
     def as_dict(self) -> dict[str, object]:
         """Serialize a transmitter-button record for a service response."""
-        return {
+        data: dict[str, object] = {
             "serial": self.serial,
             "serial_hex": f"{self.serial:06X}",
             "button": self.button,
@@ -122,6 +138,12 @@ class RadioRecord:
             "command_name": radio_command_name(self.command),
             "type": "bidi" if self.remote_type == REMOTE_TYPE_BIDI else "mono",
         }
+        if self.remote_type == REMOTE_TYPE_BIDI:
+            data["battery_level"] = self.battery_level
+        if self.len12:
+            data["remote_protocol"] = self.remote_protocol
+            data["remote_model"] = self.remote_model
+        return data
 
 
 def decode_radio_record(plain: bytes) -> RadioRecord | None:
@@ -140,6 +162,8 @@ def decode_radio_record(plain: bytes) -> RadioRecord | None:
     record = plain[14 : len(plain) - 2]
     if len(record) < 10:
         return None
+    len12 = len(record) >= 12
+    raw = record[: 12 if len12 else 10].hex()
     position = (record[0] << 8) | record[1]
     if record[2] == 0xFF and record[3] == 0xFF and record[4] == 0xFF:
         return RadioRecord(
@@ -152,9 +176,10 @@ def decode_radio_record(plain: bytes) -> RadioRecord | None:
             t4_group=0,
             priority=0,
             group_abilitation=0,
-            raw=record[:10].hex(),
+            raw=raw,
             empty=False,
             virgin=True,
+            len12=len12,
         )
     serial = (
         record[2]
@@ -166,6 +191,18 @@ def decode_radio_record(plain: bytes) -> RadioRecord | None:
     command = record[8] >> 4
     round_ = record[6] | (record[7] << 8)
     remote_type = (record[9] >> 4) & 0x03
+    # byte[9] low nibble: T4 abilitation group on a mono record, but the battery
+    # level on a bidirectional one (the app reports nibble // 4 and forces the
+    # abilitation group to 0). This is why a learned BD remote reads back with
+    # that nibble non-zero (e.g. 0x0C -> battery level 3) even though the writer
+    # always sends 0 there (T4AbilitationGroup(0)); the receiver fills it in.
+    low_nibble = record[9] & 0x0F
+    if remote_type == REMOTE_TYPE_MONO:
+        group_abilitation = low_nibble
+        battery_level = 0
+    else:
+        group_abilitation = 0
+        battery_level = low_nibble // 4
     empty = serial == 0 and button == 0 and round_ == 0
     return RadioRecord(
         position=position,
@@ -176,10 +213,14 @@ def decode_radio_record(plain: bytes) -> RadioRecord | None:
         remote_type=remote_type,
         t4_group=record[8] & 0x0F,
         priority=record[9] >> 6,
-        group_abilitation=record[9] & 0x0F,
-        raw=record[:10].hex(),
+        group_abilitation=group_abilitation,
+        raw=raw,
         empty=empty,
         virgin=False,
+        battery_level=battery_level,
+        remote_protocol=record[10] if len12 else 0,
+        remote_model=record[11] if len12 else 0,
+        len12=len12,
     )
 
 
@@ -208,6 +249,46 @@ def encode_radio_record(
         (round_ >> 8) & 0xFF,
         ((command & 0x0F) << 4) | (t4_group & 0x0F),
         ((priority & 0x03) << 6) | ((remote_type & 0x03) << 4) | (group_abilitation & 0x0F),
+    ]
+
+
+def encode_radio_record_omng(
+    serial: int,
+    button: int,
+    command: int,
+    *,
+    remote_protocol: int,
+    remote_model: int,
+    remote_type: int = REMOTE_TYPE_MONO,
+    round_: int = 0,
+    t4_group: int = 0,
+    priority: int = 0,
+    group_abilitation: int = 0,
+    position: int = 0xFFFF,
+) -> list[int]:
+    """Build the 12-byte "OMng" radio-code record used by OXIBD-class receivers.
+
+    This is the 10-byte record plus ``remote_protocol`` (byte[10]) and
+    ``remote_model`` (byte[11]). Bidirectional ("BD") remotes only take effect
+    when written in this form: the native ``setCodeOMng`` encoder emits a 12-slot
+    record, and a receiver that reports 12-byte records on read will not act on a
+    10-byte write. ``group_abilitation`` is normally 0 for these records (the app
+    passes ``T4AbilitationGroup(0)``); the receiver fills the battery nibble.
+    """
+    return [
+        *encode_radio_record(
+            serial,
+            button,
+            command,
+            remote_type=remote_type,
+            round_=round_,
+            t4_group=t4_group,
+            priority=priority,
+            group_abilitation=group_abilitation,
+            position=position,
+        ),
+        remote_protocol & 0xFF,
+        remote_model & 0xFF,
     ]
 
 
@@ -252,9 +333,13 @@ def build_radio_add_frame(
     daddr: int = RADIO_TARGET_ADDR,
     dendpoint: int = RADIO_TARGET_ENDPOINT,
 ) -> bytes:
-    """Build a DMP SET frame that writes one radio-code record."""
-    if len(record) != 10:
-        raise ValueError("record must be 10 bytes")
+    """Build a DMP SET frame that writes one radio-code record.
+
+    Accepts a 10-byte record or a 12-byte "OMng" record (bidirectional-capable
+    receivers); the DMP data length is taken from the record itself.
+    """
+    if len(record) not in (10, 12):
+        raise ValueError("record must be 10 or 12 bytes")
     return _build_radio_set_frame(
         record, iaddr, iendp, daddr=daddr, dendpoint=dendpoint
     )

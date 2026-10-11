@@ -100,12 +100,14 @@ from .protocol.t4.radio import (
     RADIO_READ_RECYCLE,
     RADIO_TARGET_ADDR,
     RADIO_TARGET_ENDPOINT,
+    REMOTE_TYPE_BIDI,
     build_radio_activation_frame,
     build_radio_add_frame,
     build_radio_delete_frame,
     build_radio_read_frame,
     decode_radio_record,
     encode_radio_record,
+    encode_radio_record_omng,
 )
 from .protocol.t4.registers import (
     CONTROLLER_TARGET,
@@ -190,6 +192,7 @@ class NiceBidiClient:
         self._session_key: bytes | None = None
         self._sequence = 1
         self._lock = threading.RLock()
+        self._last_observed_omng = None
         self._reconnect_count = 0
 
     @property
@@ -864,6 +867,7 @@ class NiceBidiClient:
         read means the used memory has ended. Returns the non-empty RadioRecords.
         """
         records = []
+        observed_len12 = None
         self._ensure_connected_locked()
         in_batch = 0
         consecutive_empty = 0
@@ -899,6 +903,8 @@ class NiceBidiClient:
             if record is None:
                 position += 1
                 continue
+            if observed_len12 is None:
+                observed_len12 = record.len12
             if record.virgin:
                 break
             if record.empty:
@@ -910,6 +916,7 @@ class NiceBidiClient:
             consecutive_empty = 0
             records.append(record)
             position += 1
+        self._last_observed_omng = observed_len12
         return records
 
     def _radio_set_locked(self, frame: bytes) -> None:
@@ -967,7 +974,7 @@ class NiceBidiClient:
             return targets
 
     def add_transmitter(self, record: list) -> object:
-        """Write one 10-byte radio-code record (position auto-assigned).
+        """Write one 10- or 12-byte radio-code record (position auto-assigned).
 
         Verifies with a re-read and returns the matching stored RadioRecord.
         """
@@ -1008,19 +1015,107 @@ class NiceBidiClient:
         t4_group: int = 0,
         priority: int = 0,
         group_abilitation: int = 0,
+        remote_protocol: int | None = None,
+        remote_model: int | None = None,
+        len12: bool | None = None,
     ) -> object:
-        """Build a radio-code record from fields and store it."""
-        record = encode_radio_record(
-            serial,
-            button,
-            command,
-            remote_type=remote_type,
-            round_=round_,
-            t4_group=t4_group,
-            priority=priority,
-            group_abilitation=group_abilitation,
-        )
-        return self.add_transmitter(record)
+        """Build a radio-code record from fields and store it.
+
+        Receivers such as the OXIBD store 12-byte "OMng" records (carrying the
+        remote protocol and model); a bidirectional ("BD") remote only works when
+        written in that form. The record width is chosen to match what the
+        receiver already uses (detected from the stored records) unless ``len12``
+        forces it. A 12-byte write needs ``remote_protocol`` / ``remote_model``;
+        when they are not given they are copied from an existing record of the
+        same serial, or any existing 12-byte record on the receiver. If none is
+        known, pair the remote with ``learn_transmitter`` instead -- the receiver
+        then fills the protocol, model and battery fields over the air.
+        """
+        with self._lock:
+            # Width is a property of the RECEIVER, not of the remote: read
+            # its slots (which also yields any same-serial copy source below)
+            # and take the observed slot width. _read_transmitter_records_locked
+            # records it from the first decoded slot, including the empty/virgin
+            # terminator, so an empty 12-byte receiver is still recognised as 12.
+            existing = self._read_transmitter_records_locked()
+            receiver_omng = self._last_observed_omng
+            if len12 is not None:
+                want_omng = len12
+            elif receiver_omng is not None:
+                want_omng = receiver_omng
+            else:
+                # Receiver width could not be observed; fall back to the hint.
+                want_omng = remote_type == REMOTE_TYPE_BIDI
+            if receiver_omng is False and (
+                len12 is True
+                or remote_protocol is not None
+                or remote_model is not None
+            ):
+                # A 10-byte (mono/Flor) receiver cannot store an OMng record.
+                # A bidirectional remote without an explicit 12-byte request
+                # falls through and is written 10-byte (one-way / O-Code use).
+                raise NiceBidiConnectionError(
+                    "this receiver stores 10-byte records and cannot hold a "
+                    "12-byte (bidirectional / OMng) record"
+                )
+            if want_omng:
+                proto = remote_protocol
+                model = remote_model
+                if remote_type == REMOTE_TYPE_BIDI and (
+                    proto is None or model is None
+                ):
+                    # Opaque protocol/model may only be copied from a record
+                    # of the SAME serial (another button of a known remote);
+                    # never borrowed from an unrelated remote.
+                    source = next(
+                        (
+                            r
+                            for r in existing
+                            if getattr(r, "len12", False) and r.serial == serial
+                        ),
+                        None,
+                    )
+                    if source is not None:
+                        if proto is None:
+                            proto = source.remote_protocol
+                        if model is None:
+                            model = source.remote_model
+                    if proto is None or model is None:
+                        raise NiceBidiConnectionError(
+                            "a bidirectional 12-byte (OMng) record needs "
+                            "remote_protocol and remote_model; pair the remote "
+                            "with learn_transmitter so the receiver fills them, "
+                            "or copy them from an existing record of the same "
+                            "serial"
+                        )
+                # A mono remote on an OMng receiver carries no protocol/model
+                # of its own; MyNice Pro writes 0 in that case.
+                proto = 0 if proto is None else proto
+                model = 0 if model is None else model
+                record = encode_radio_record_omng(
+                    serial,
+                    button,
+                    command,
+                    remote_protocol=proto,
+                    remote_model=model,
+                    remote_type=remote_type,
+                    round_=round_,
+                    t4_group=t4_group,
+                    priority=priority,
+                    group_abilitation=group_abilitation,
+                )
+            else:
+                record = encode_radio_record(
+                    serial,
+                    button,
+                    command,
+                    remote_type=remote_type,
+                    round_=round_,
+                    t4_group=t4_group,
+                    priority=priority,
+                    group_abilitation=group_abilitation,
+                )
+            return self.add_transmitter(record)
 
     def set_transmitter_command(
         self, serial: int, button: int, new_command: int
@@ -1045,19 +1140,48 @@ class NiceBidiClient:
                     target.position, self._t4_iaddr, self._t4_iendp
                 )
             )
-            record = encode_radio_record(
-                target.serial,
-                target.button,
-                new_command,
-                remote_type=target.remote_type,
-                round_=target.round,
-                t4_group=target.t4_group,
-                priority=target.priority,
-                group_abilitation=target.group_abilitation,
-            )
-            self._radio_set_locked(
-                build_radio_add_frame(record, self._t4_iaddr, self._t4_iendp)
-            )
+            if getattr(target, "len12", False):
+                record = encode_radio_record_omng(
+                    target.serial,
+                    target.button,
+                    new_command,
+                    remote_protocol=target.remote_protocol,
+                    remote_model=target.remote_model,
+                    remote_type=target.remote_type,
+                    round_=target.round,
+                    t4_group=target.t4_group,
+                    priority=target.priority,
+                    group_abilitation=target.group_abilitation,
+                )
+            else:
+                record = encode_radio_record(
+                    target.serial,
+                    target.button,
+                    new_command,
+                    remote_type=target.remote_type,
+                    round_=target.round,
+                    t4_group=target.t4_group,
+                    priority=target.priority,
+                    group_abilitation=target.group_abilitation,
+                )
+            try:
+                self._radio_set_locked(
+                    build_radio_add_frame(record, self._t4_iaddr, self._t4_iendp)
+                )
+            except (OSError, ssl.SSLError, NiceBidiConnectionError):
+                # The old slot was already freed above; restore the original
+                # record so a failed re-add does not lose the button entirely.
+                try:
+                    self._radio_set_locked(
+                        build_radio_add_frame(
+                            list(bytes.fromhex(target.raw)),
+                            self._t4_iaddr,
+                            self._t4_iendp,
+                        )
+                    )
+                except (OSError, ssl.SSLError, NiceBidiConnectionError):
+                    pass
+                raise
             after = self._read_transmitter_records_locked()
             match = next(
                 (

@@ -45,6 +45,8 @@ ATTR_ROUND = "round"
 ATTR_PRIORITY = "priority"
 ATTR_GROUP_ABILITATION = "group_abilitation"
 ATTR_T4_GROUP = "t4_group"
+ATTR_REMOTE_PROTOCOL = "remote_protocol"
+ATTR_REMOTE_MODEL = "remote_model"
 ATTR_TIMEOUT = "timeout"
 
 SETTABLE_PERMISSIONS = ("admin", "user", "disable")
@@ -109,13 +111,26 @@ ADD_TRANSMITTER_SCHEMA = vol.Schema(
         vol.Optional(ATTR_PRIORITY, default=0): vol.All(
             vol.Coerce(int), vol.Range(min=0, max=3)
         ),
-        # 12 (0b1100) is what every transmitter stored by the installer / MyNice
-        # Pro carries on an OXIBD; 0 is an untested value.
-        vol.Optional(ATTR_GROUP_ABILITATION, default=12): vol.All(
+        # byte[9] low nibble. On a MONO record this is the T4 abilitation group;
+        # MyNice Pro always writes 0 here (T4AbilitationGroup(0)). On a BIDI record
+        # the same nibble is the battery level the receiver fills in on read
+        # (0x0C -> level 3), which is why stored BD remotes read back as 12 even
+        # though nothing writes it -- so this field is forced to 0 for bidi below.
+        vol.Optional(ATTR_GROUP_ABILITATION, default=0): vol.All(
             vol.Coerce(int), vol.Range(min=0, max=15)
         ),
         vol.Optional(ATTR_T4_GROUP, default=0): vol.All(
             vol.Coerce(int), vol.Range(min=0, max=15)
+        ),
+        # OXIBD and other bidirectional-capable receivers store 12-byte "OMng"
+        # records carrying the remote protocol (byte[10]) and model (byte[11]); a
+        # BD remote only works when written in that form. Left unset, the width is
+        # matched to the receiver and these are copied from an existing record.
+        vol.Optional(ATTR_REMOTE_PROTOCOL): vol.All(
+            vol.Coerce(int), vol.Range(min=0, max=255)
+        ),
+        vol.Optional(ATTR_REMOTE_MODEL): vol.All(
+            vol.Coerce(int), vol.Range(min=0, max=255)
         ),
     }
 )
@@ -216,7 +231,16 @@ def async_setup_services(hass: HomeAssistant) -> None:
 
     async def async_add_transmitter(call: ServiceCall) -> ServiceResponse:
         coordinator = _resolve_coordinator(hass, call)
-        remote_type = 1 if call.data[ATTR_TYPE] == "bidi" else 0
+        is_bidi = call.data[ATTR_TYPE] == "bidi"
+        remote_type = 1 if is_bidi else 0
+        # On a bidi record byte[9]'s low nibble is the receiver-managed battery
+        # level, not a group; MyNice Pro writes 0 there, so do the same.
+        group_abilitation = 0 if is_bidi else call.data[ATTR_GROUP_ABILITATION]
+        extra: dict[str, int] = {}
+        if ATTR_REMOTE_PROTOCOL in call.data:
+            extra["remote_protocol"] = call.data[ATTR_REMOTE_PROTOCOL]
+        if ATTR_REMOTE_MODEL in call.data:
+            extra["remote_model"] = call.data[ATTR_REMOTE_MODEL]
         record = await coordinator.async_add_transmitter(
             _parse_serial(call.data[ATTR_SERIAL]),
             call.data[ATTR_BUTTON],
@@ -224,8 +248,9 @@ def async_setup_services(hass: HomeAssistant) -> None:
             remote_type=remote_type,
             round_=call.data[ATTR_ROUND],
             priority=call.data[ATTR_PRIORITY],
-            group_abilitation=call.data[ATTR_GROUP_ABILITATION],
+            group_abilitation=group_abilitation,
             t4_group=call.data[ATTR_T4_GROUP],
+            **extra,
         )
         return {"added": record.as_dict()}
 

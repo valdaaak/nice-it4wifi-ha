@@ -312,7 +312,7 @@
     },
     "add_transmitter": {
       "name": "Add transmitter",
-      "description": "Store a radio transmitter by serial number. Reliable for mono (O-Code) remotes; a bidirectional remote may also require on-site learning.",
+      "description": "Store a radio transmitter by serial number. On a bidirectional-capable receiver (e.g. OXIBD) the record width and protocol/model are matched to the receiver automatically; a brand-new bidirectional remote with no protocol/model yet known may still require on-site learning.",
       "fields": {
         "serial": {
           "name": "Serial",
@@ -340,11 +340,19 @@
         },
         "group_abilitation": {
           "name": "Group abilitation",
-          "description": "Group enable bits (0-15). Stored remotes on an OXIBD carry 12; default 12."
+          "description": "Mono-record T4 abilitation group (0-15). MyNice Pro writes 0; ignored (forced to 0) for bidi, where this nibble is the receiver-filled battery level. Default 0."
         },
         "t4_group": {
           "name": "T4 group",
           "description": "T4 group nibble (0-15). Stored remotes on an OXIBD carry 0."
+        },
+        "remote_protocol": {
+          "name": "Remote protocol",
+          "description": "Bidirectional 12-byte record protocol byte (0-255). Leave unset to copy it from an existing record on the receiver."
+        },
+        "remote_model": {
+          "name": "Remote model",
+          "description": "Bidirectional 12-byte record model byte (0-255). Leave unset to copy it from an existing record on the receiver."
         },
         "config_entry_id": {
           "name": "Gate",

@@ -157,6 +157,44 @@ longer reports `t4_04_40_motion`.
 
 ---
 
+## 11. OXIBD 12-byte "O-Manage" records — teach bidirectional remotes
+
+Adding a transmitter was reverse-engineered from the MyNice Pro app (decompiled
+native `libnative-lib.so` + the `it.buildingapp.appoview.libraryt4` / `it.twospecials`
+DEX classes). Findings, now implemented:
+
+- The code write is the **same** DMP command as the (already working) read and
+  delete: group `0x0A`, param `0x25`, op `0xA9` (SET), datalen = record length.
+  It is **unsigned** — no certificate/MAC/challenge (that machinery is only for
+  the control-unit radio-protocol-enable feature, not code-in-memory).
+- An **OXIBD**-class receiver stores **12-byte “OMng”** records: the 10-byte record
+  plus `[10]=remote_protocol`, `[11]=remote_model`. A bidirectional (“BD”) remote
+  only actuates when written in this form; a 10-byte write to such a receiver is
+  stored (shows in the list) but the gate never responds — the original failure.
+- `byte[9]` low nibble is the T4 abilitation group on a **mono** record but the
+  **battery level** (`nibble // 4`) on a **bidi** one; the writer always sends 0
+  there (`T4AbilitationGroup(0)`) and the receiver fills the battery nibble. The
+  decoder now splits this correctly (an earlier read mislabelled `0x0C` as group 12).
+- `remote_protocol` / `remote_model` are **opaque, device-reported** bytes and are
+  never hardcoded. They are captured by **learn mode** (the receiver writes the
+  full 12-byte record when the remote is pressed, then it is read back) or copied
+  from an existing record of the **same serial** (another button of a known remote).
+- Record **width is driven by the receiver**, not the remote: the read now reports
+  the observed slot width (from the first slot, including the empty/virgin
+  terminator), so an empty 12-byte receiver is still recognised. `add_transmitter`
+  refuses a 12-byte/OMng write to a provably 10-byte receiver, and `set_transmitter_command`
+  restores the original record if the re-add fails so a reassign cannot lose a button.
+
+New/changed: `protocol/t4/radio.py` (`encode_radio_record_omng`, 12-byte decode,
+battery/protocol/model fields), `client.py` (`add_transmitter_by_fields` width/copy
+logic, recoverable `set_transmitter_command`), `models/radio.py`, `services.py` +
+`services.yaml` + `strings.json` + `translations/en.json` (`remote_protocol` /
+`remote_model` inputs, `battery_level` / `len12` in responses). Version `0.8.0-it4wifi.7`.
+**Still to validate live at the gate:** that a learned/written 12-byte ON3EBD record
+actually actuates (list-appearance alone never proves actuation).
+
+---
+
 ## Note on calibration
 
 Position calibration is **not needed** on encoder gates and **fails** on a fast gate

@@ -138,7 +138,7 @@ add_transmitter:
           mode: box
     group_abilitation:
       required: false
-      example: 12
+      example: 0
       selector:
         number:
           min: 0
@@ -151,6 +151,22 @@ add_transmitter:
         number:
           min: 0
           max: 15
+          mode: box
+    remote_protocol:
+      required: false
+      example: 0
+      selector:
+        number:
+          min: 0
+          max: 255
+          mode: box
+    remote_model:
+      required: false
+      example: 0
+      selector:
+        number:
+          min: 0
+          max: 255
           mode: box
     config_entry_id:
       required: false
