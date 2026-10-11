@@ -195,6 +195,33 @@ actually actuates (list-appearance alone never proves actuation).
 
 ---
 
+## 12. Capture a pressed remote from the event stream (learn, fixed)
+
+RE of the app (RxJavaT4Manager.observeRadioEventsWithPolling, native T4LogReply.decodeCodR)
+showed why the earlier learn never captured anything: a pressed remote is reported by the
+receiver as an **unsolicited event**, never written to the 0x25 code list, so polling the
+list (the old learn_transmitter) could not see it. The event already reaches us, decrypted,
+on the channel we enable (`<Events>1`); the live-status parser just returned None for it.
+
+- The arm (`build_radio_activation_frame`, 0x0A/0x26 SET seconds) was already correct; the
+  app arms with 100 s and re-arms, disarms with 0 — matching ours. What was missing was
+  reading the **event**, not the list.
+- `decode_radio_activation_data` ports the native decodeCodR (BIG-endian, unlike the LE code
+  record): button=data[0]>>4; 28-bit serial over data[0..3]; round BE at data[4:6]; data[6]
+  packs priority/in-memory/page; data[7]=slot; a 10-byte record adds protocol[8]/model[9].
+- `client.capture_radio_activation` registers an event listener, arms the window, waits for a
+  press on the unsolicited stream, and returns the decoded remote plus the raw decrypted
+  payloads (so the exact in-frame offset can be confirmed against a known remote). It writes
+  nothing to the receiver. Exposed as the `capture_radio_press` service.
+- This gives a bidirectional remote's opaque protocol/model, which `add_transmitter` needs
+  for a 12-byte OMng write (see section 11).
+
+**To validate live (one press):** the exact byte offset of the CodR data region inside the
+decrypted frame, and that 0x0A/0x26 truly arms, are confirmed from the first captured
+payload hex (press an already-paired remote; zero write risk). Version `0.8.0-it4wifi.8`.
+
+---
+
 ## Note on calibration
 
 Position calibration is **not needed** on encoder gates and **fails** on a fast gate

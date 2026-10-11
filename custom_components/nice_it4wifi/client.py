@@ -96,6 +96,8 @@ from .protocol.t4.dmp import (
 from .protocol.t4.radio import (
     RADIO_ACTIVATION_REARM_SECONDS,
     RADIO_ACTIVATION_SECONDS,
+    RadioActivation,
+    decode_radio_activation_frame,
     RADIO_MAX_POSITIONS,
     RADIO_READ_RECYCLE,
     RADIO_TARGET_ADDR,
@@ -1203,6 +1205,67 @@ class NiceBidiClient:
         self._radio_set_locked(
             build_radio_activation_frame(seconds, self._t4_iaddr, self._t4_iendp)
         )
+
+    def capture_radio_activation(self, timeout: int = 90) -> dict:
+        """Arm learn mode and capture the next remote pressed near the receiver.
+
+        A pressed remote is reported by the receiver as an UNSOLICITED event
+        (never written to the code list), so this registers an event listener,
+        arms the radio-activation window, and waits up to ``timeout`` seconds for
+        a press to arrive on the event stream. Returns the decoded activation(s)
+        and the raw decrypted payloads seen (so the frame offsets can be verified
+        against a known remote). Disarms on exit; writes nothing to the receiver.
+        """
+        timeout = max(5, min(int(timeout), 180))
+        captured: list = []
+        raw_payloads: list[str] = []
+        found = threading.Event()
+        buf_lock = threading.Lock()
+
+        def on_frame(frame: bytes) -> None:
+            try:
+                payloads = _decrypt_t4_payloads_from_frame(frame)
+            except (ValueError, TypeError):
+                return
+            for payload in payloads:
+                with buf_lock:
+                    if len(raw_payloads) < 64:
+                        raw_payloads.append(payload.hex())
+                activation = decode_radio_activation_frame(payload)
+                if activation is not None:
+                    with buf_lock:
+                        captured.append(activation)
+                    found.set()
+
+        remove = self.add_event_callback(on_frame)
+        try:
+            with self._lock:
+                self._arm_radio_learning(RADIO_ACTIVATION_SECONDS)
+            last_arm = time.monotonic()
+            deadline = last_arm + timeout
+            while time.monotonic() < deadline and not found.is_set():
+                # Re-arm before the ~100 s window lapses; kept rare so the event
+                # connection is not torn down under the incoming press.
+                if time.monotonic() - last_arm >= 80:
+                    try:
+                        with self._lock:
+                            self._arm_radio_learning(RADIO_ACTIVATION_SECONDS)
+                        last_arm = time.monotonic()
+                    except (OSError, ssl.SSLError, NiceBidiConnectionError):
+                        pass
+                found.wait(0.5)
+        finally:
+            remove()
+            try:
+                with self._lock:
+                    self._arm_radio_learning(0)
+            except (OSError, ssl.SSLError, NiceBidiConnectionError):
+                _LOGGER.debug("Nice radio learn-mode cancel failed", exc_info=True)
+        with buf_lock:
+            return {
+                "captured": [a.as_dict() for a in captured],
+                "raw_payloads": list(raw_payloads),
+            }
 
     def learn_transmitter(self, timeout: int = 60) -> list:
         """Arm the receiver's learn mode and return transmitters captured.

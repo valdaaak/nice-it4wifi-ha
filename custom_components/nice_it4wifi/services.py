@@ -33,6 +33,7 @@ SERVICE_DELETE_TRANSMITTER = "delete_transmitter"
 SERVICE_ADD_TRANSMITTER = "add_transmitter"
 SERVICE_SET_TRANSMITTER_COMMAND = "set_transmitter_command"
 SERVICE_LEARN_TRANSMITTER = "learn_transmitter"
+SERVICE_CAPTURE_RADIO_PRESS = "capture_radio_press"
 
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"
 ATTR_USERNAME = "username"
@@ -61,6 +62,7 @@ _SERVICES = (
     SERVICE_ADD_TRANSMITTER,
     SERVICE_SET_TRANSMITTER_COMMAND,
     SERVICE_LEARN_TRANSMITTER,
+    SERVICE_CAPTURE_RADIO_PRESS,
 )
 
 
@@ -146,6 +148,14 @@ LEARN_TRANSMITTER_SCHEMA = vol.Schema(
     {
         **_BASE_FIELDS,
         vol.Optional(ATTR_TIMEOUT, default=60): vol.All(
+            vol.Coerce(int), vol.Range(min=5, max=180)
+        ),
+    }
+)
+CAPTURE_RADIO_PRESS_SCHEMA = vol.Schema(
+    {
+        **_BASE_FIELDS,
+        vol.Optional(ATTR_TIMEOUT, default=90): vol.All(
             vol.Coerce(int), vol.Range(min=5, max=180)
         ),
     }
@@ -268,6 +278,12 @@ def async_setup_services(hass: HomeAssistant) -> None:
         learned = await coordinator.async_learn_transmitter(call.data[ATTR_TIMEOUT])
         return {"learned": [record.as_dict() for record in learned]}
 
+    async def async_capture_radio_press(call: ServiceCall) -> ServiceResponse:
+        coordinator = _resolve_coordinator(hass, call)
+        return await coordinator.async_capture_radio_activation(
+            call.data[ATTR_TIMEOUT]
+        )
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_LIST_USERS,
@@ -327,6 +343,13 @@ def async_setup_services(hass: HomeAssistant) -> None:
         async_learn_transmitter,
         schema=LEARN_TRANSMITTER_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CAPTURE_RADIO_PRESS,
+        async_capture_radio_press,
+        schema=CAPTURE_RADIO_PRESS_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
     )
 
 

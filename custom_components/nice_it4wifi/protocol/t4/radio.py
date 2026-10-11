@@ -362,3 +362,93 @@ def build_radio_activation_frame(
     body = [daddr, dendpoint, iaddr, iendp, 0x08, sublen, marker, *args, dmp_checksum(*args)]
     length = len(body)
     return bytes([0x55, length, *body, length])
+
+
+# --- Radio activation (learn-mode) capture ---------------------------------
+# While learn mode is armed (build_radio_activation_frame), the receiver reports
+# each remote pressed nearby as an UNSOLICITED event carrying a CodR data region.
+# The press is NOT written to the 0x25 code list, so it is caught on the event
+# stream, not by polling the list. This layout is the native decodeCodR port and
+# is BIG-endian, unlike the little-endian 0x25 code record.
+RADIO_ACTIVATION_STATUS = 0x64  # EVT_RADIO_ACTIVATION wire value ("code acquired")
+
+
+@dataclass(frozen=True, slots=True)
+class RadioActivation:
+    """One remote press captured while learn mode is armed."""
+
+    serial: int
+    button: int
+    round: int
+    priority: int
+    in_memory: bool
+    page: int
+    memory_position: int
+    remote_protocol: int
+    remote_model: int
+    len10: bool
+
+    def as_dict(self) -> dict[str, object]:
+        """Serialize a captured remote press."""
+        return {
+            "serial": self.serial,
+            "serial_hex": f"{self.serial:06X}",
+            "button": self.button,
+            "round": self.round,
+            "priority": self.priority,
+            "in_memory": self.in_memory,
+            "page": self.page,
+            "memory_position": self.memory_position,
+            "remote_protocol": self.remote_protocol,
+            "remote_model": self.remote_model,
+            "len10": self.len10,
+        }
+
+
+def decode_radio_activation_data(data: bytes) -> RadioActivation | None:
+    """Decode the CodR data region of a radio-activation event (BIG-endian).
+
+    8 bytes = mono (no protocol/model); 10 bytes = bidirectional/len10 record.
+    Port of the app's native ``decodeCodR``: ``button = data[0] >> 4``; the 28-bit
+    serial spans ``data[0]`` low nibble through ``data[3]``; ``round`` is a 16-bit
+    big-endian value at ``data[4:6]``; ``data[6]`` packs priority (bits 7..6),
+    in-memory (bit 2) and page (bits 1..0); ``data[7]`` is the memory slot; a
+    10-byte record adds ``data[8]`` protocol and ``data[9]`` model.
+    """
+    if len(data) not in (8, 10):
+        return None
+    len10 = len(data) == 10
+    return RadioActivation(
+        serial=((data[0] & 0x0F) << 24) | (data[1] << 16) | (data[2] << 8) | data[3],
+        button=data[0] >> 4,
+        round=(data[4] << 8) | data[5],
+        priority=data[6] >> 6,
+        in_memory=bool(data[6] & 0x04),
+        page=data[6] & 0x03,
+        memory_position=data[7],
+        remote_protocol=data[8] if len10 else 0,
+        remote_model=data[9] if len10 else 0,
+        len10=len10,
+    )
+
+
+def decode_radio_activation_frame(plain: bytes) -> RadioActivation | None:
+    """Best-effort decode of a decrypted unsolicited frame as a remote press.
+
+    Returns None for anything that is not a radio-group payload. The exact data
+    offset is confirmed by a live capture; this reuses the code-list reply framing
+    (data between the 14-byte header and 2-byte trailer) and skips a 0x25 code
+    reply so a read is never mistaken for a press. Revalidate against the first
+    captured payload before relying on the decoded values.
+    """
+    if len(plain) < 22 or plain[0] != 0x55 or plain[9] != RADIO_GROUP:
+        return None
+    if plain[10] == RADIO_CODE_PARAM:  # a code-list reply, not an activation
+        return None
+    data = plain[14 : len(plain) - 2]
+    for width in (10, 8):
+        if len(data) >= width:
+            decoded = decode_radio_activation_data(bytes(data[:width]))
+            if decoded is not None:
+                return decoded
+    return None

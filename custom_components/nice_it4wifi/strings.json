@@ -395,6 +395,20 @@
           "description": "Which gate to act on. Optional when only one gate is configured."
         }
       }
+    },
+    "capture_radio_press": {
+      "name": "Capture radio press",
+      "description": "Arm the gate receiver's learn window and capture the next remote pressed near it. Returns the pressed remote's serial, button, protocol and model (read from the event stream; nothing is written to the receiver). Use this to read a bidirectional remote's protocol/model before adding it.",
+      "fields": {
+        "timeout": {
+          "name": "Timeout",
+          "description": "How long to listen for a press, in seconds (5-180)."
+        },
+        "config_entry_id": {
+          "name": "Gate",
+          "description": "Which gate to act on. Optional when only one gate is configured."
+        }
+      }
     }
   }
 }

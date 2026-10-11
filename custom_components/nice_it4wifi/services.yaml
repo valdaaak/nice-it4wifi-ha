@@ -222,3 +222,21 @@ learn_transmitter:
       selector:
         config_entry:
           integration: nice_it4wifi
+
+capture_radio_press:
+  fields:
+    timeout:
+      required: false
+      example: 90
+      selector:
+        number:
+          min: 5
+          max: 180
+          unit_of_measurement: seconds
+          mode: box
+    config_entry_id:
+      required: false
+      example: 0123456789ABCDEFGHJKMNPQRS
+      selector:
+        config_entry:
+          integration: nice_it4wifi

@@ -307,6 +307,18 @@ class NiceAdministrationController(OwnerBoundController):
             verification=RADIO_VERIFICATION,
         )
 
+    async def async_capture_radio_activation(self, timeout: int = 90) -> dict:
+        """Arm learn mode and capture the next remote pressed near the receiver.
+
+        The press arrives as an unsolicited event, not a code-list change, so the
+        capture reads the event stream and writes nothing to the receiver.
+        """
+        return await self._async_execute(
+            "capture_radio_activation",
+            lambda: self.client.capture_radio_activation(timeout),
+            read_only=False,
+        )
+
     async def async_approve_user(self, username: str) -> None:
         """Approve one pending user and verify it became confirmed."""
         target = validate_username(username)
