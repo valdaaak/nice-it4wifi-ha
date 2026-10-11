@@ -41,6 +41,10 @@ ATTR_SERIAL = "serial"
 ATTR_BUTTON = "button"
 ATTR_COMMAND = "command"
 ATTR_TYPE = "type"
+ATTR_ROUND = "round"
+ATTR_PRIORITY = "priority"
+ATTR_GROUP_ABILITATION = "group_abilitation"
+ATTR_T4_GROUP = "t4_group"
 ATTR_TIMEOUT = "timeout"
 
 SETTABLE_PERMISSIONS = ("admin", "user", "disable")
@@ -99,6 +103,20 @@ ADD_TRANSMITTER_SCHEMA = vol.Schema(
         vol.Required(ATTR_BUTTON): vol.All(vol.Coerce(int), vol.Range(min=1, max=15)),
         vol.Required(ATTR_COMMAND): vol.All(vol.Coerce(int), vol.Range(min=1, max=15)),
         vol.Optional(ATTR_TYPE, default="mono"): vol.In(("mono", "bidi")),
+        vol.Optional(ATTR_ROUND, default=0): vol.All(
+            vol.Coerce(int), vol.Range(min=0, max=0xFFFF)
+        ),
+        vol.Optional(ATTR_PRIORITY, default=0): vol.All(
+            vol.Coerce(int), vol.Range(min=0, max=3)
+        ),
+        # 12 (0b1100) is what every transmitter stored by the installer / MyNice
+        # Pro carries on an OXIBD; 0 is an untested value.
+        vol.Optional(ATTR_GROUP_ABILITATION, default=12): vol.All(
+            vol.Coerce(int), vol.Range(min=0, max=15)
+        ),
+        vol.Optional(ATTR_T4_GROUP, default=0): vol.All(
+            vol.Coerce(int), vol.Range(min=0, max=15)
+        ),
     }
 )
 SET_TRANSMITTER_COMMAND_SCHEMA = vol.Schema(
@@ -204,6 +222,10 @@ def async_setup_services(hass: HomeAssistant) -> None:
             call.data[ATTR_BUTTON],
             call.data[ATTR_COMMAND],
             remote_type=remote_type,
+            round_=call.data[ATTR_ROUND],
+            priority=call.data[ATTR_PRIORITY],
+            group_abilitation=call.data[ATTR_GROUP_ABILITATION],
+            t4_group=call.data[ATTR_T4_GROUP],
         )
         return {"added": record.as_dict()}
 

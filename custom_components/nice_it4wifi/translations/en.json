@@ -330,6 +330,22 @@
           "name": "Type",
           "description": "mono (O-Code) or bidi (bidirectional)."
         },
+        "round": {
+          "name": "Round",
+          "description": "Rolling-code counter to store (0-65535). Use the value from a previous listing when re-adding a remote that was not reset; 0 for a reset or new remote."
+        },
+        "priority": {
+          "name": "Priority",
+          "description": "Record priority bits (0-3). Stored remotes on an OXIBD carry 0."
+        },
+        "group_abilitation": {
+          "name": "Group abilitation",
+          "description": "Group enable bits (0-15). Stored remotes on an OXIBD carry 12; default 12."
+        },
+        "t4_group": {
+          "name": "T4 group",
+          "description": "T4 group nibble (0-15). Stored remotes on an OXIBD carry 0."
+        },
         "config_entry_id": {
           "name": "Gate",
           "description": "Which gate to act on. Optional when only one gate is configured."

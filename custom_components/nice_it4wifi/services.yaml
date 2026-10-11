@@ -120,6 +120,38 @@ add_transmitter:
           options:
             - mono
             - bidi
+    round:
+      required: false
+      example: 0
+      selector:
+        number:
+          min: 0
+          max: 65535
+          mode: box
+    priority:
+      required: false
+      example: 0
+      selector:
+        number:
+          min: 0
+          max: 3
+          mode: box
+    group_abilitation:
+      required: false
+      example: 12
+      selector:
+        number:
+          min: 0
+          max: 15
+          mode: box
+    t4_group:
+      required: false
+      example: 0
+      selector:
+        number:
+          min: 0
+          max: 15
+          mode: box
     config_entry_id:
       required: false
       example: 0123456789ABCDEFGHJKMNPQRS
