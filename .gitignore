@@ -4,3 +4,4 @@ __pycache__/
 *.bak2
 .DS_Store
 *.zip
+androguard.db
