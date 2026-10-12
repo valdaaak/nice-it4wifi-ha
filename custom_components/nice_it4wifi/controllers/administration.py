@@ -307,6 +307,14 @@ class NiceAdministrationController(OwnerBoundController):
             verification=RADIO_VERIFICATION,
         )
 
+    async def async_scan_radio_registers(self, start: int = 0, end: int = 0x5F) -> dict:
+        """Read-only scan of OXI config registers over the bus; writes nothing."""
+        return await self._async_execute(
+            "scan_radio_registers",
+            lambda: self.client.scan_radio_registers(start, end),
+            read_only=True,
+        )
+
     async def async_capture_radio_activation(self, timeout: int = 90) -> dict:
         """Arm learn mode and capture the next remote pressed near the receiver.
 

@@ -284,6 +284,9 @@ class NiceConnectionRouter:
     def capture_radio_activation(self, timeout: int = 90):
         return self._invoke_once("capture_radio_activation", timeout)
 
+    def scan_radio_registers(self, start: int = 0x00, end: int = 0x5F):
+        return self._invoke_once("scan_radio_registers", start, end)
+
     def approve_user(self, user_id: int, username: str) -> None:
         self._write("approve_user", user_id, username)
 

@@ -1267,6 +1267,55 @@ class NiceBidiClient:
                 "raw_payloads": list(raw_payloads),
             }
 
+    def scan_radio_registers(self, start: int = 0x00, end: int = 0x5F) -> dict:
+        """READ-ONLY scan of OXI group-0x0A DMP registers (GET op 0x99).
+
+        Writes nothing to the receiver. Returns, per parameter that answered,
+        the register key, value bytes (hex) and length, so a config register
+        can be identified by shape: a 2-byte word is RADIO_CFG (bit 8 == 0 =>
+        PIN lock active), a 4-byte uint is RADIO_PIN (the stored PIN, cleartext).
+        Parameters that error (absent) are skipped.
+        """
+        start = max(0, min(int(start), 0xFF))
+        end = max(start, min(int(end), 0xFF))
+        out: dict[str, object] = {}
+        with self._lock:
+            self._ensure_connected_locked()
+            in_batch = 0
+            param = start
+            while param <= end:
+                if in_batch >= RADIO_READ_RECYCLE:
+                    self._close_locked()
+                    self._ensure_connected_locked()
+                    in_batch = 0
+                regs: dict = {}
+                try:
+                    self._read_dmp_register_locked(
+                        regs,
+                        RADIO_TARGET_ADDR,
+                        RADIO_TARGET_ENDPOINT,
+                        RADIO_GROUP,
+                        param,
+                        required=False,
+                    )
+                except (OSError, ssl.SSLError, NiceBidiConnectionError):
+                    self._close_locked()
+                    self._ensure_connected_locked()
+                    in_batch = 0
+                    param += 1
+                    continue
+                in_batch += 1
+                for key, parsed in regs.items():
+                    value = parsed.value or b""
+                    out[f"{param:02X}"] = {
+                        "key": key,
+                        "value": value.hex(),
+                        "len": len(value),
+                        "raw": parsed.plain_hex,
+                    }
+                param += 1
+        return out
+
     def learn_transmitter(self, timeout: int = 60) -> list:
         """Arm the receiver's learn mode and return transmitters captured.
 
