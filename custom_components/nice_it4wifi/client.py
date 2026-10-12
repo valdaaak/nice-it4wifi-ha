@@ -99,6 +99,7 @@ from .protocol.t4.radio import (
     RadioActivation,
     decode_radio_activation_frame,
     RADIO_MAX_POSITIONS,
+    RADIO_GROUP,
     RADIO_READ_RECYCLE,
     RADIO_TARGET_ADDR,
     RADIO_TARGET_ENDPOINT,
