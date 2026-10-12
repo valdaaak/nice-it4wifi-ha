@@ -281,6 +281,9 @@ class NiceConnectionRouter:
     def learn_transmitter(self, timeout: int = 60):
         return self._invoke_once("learn_transmitter", timeout)
 
+    def capture_radio_activation(self, timeout: int = 90):
+        return self._invoke_once("capture_radio_activation", timeout)
+
     def approve_user(self, user_id: int, username: str) -> None:
         self._write("approve_user", user_id, username)
 
